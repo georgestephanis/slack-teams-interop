@@ -20,7 +20,7 @@ async function bootstrap() {
   if (config.SLACK_BOT_TOKEN) {
     console.log('⚡ Starting Slack adapter...');
     try {
-      slackAdapter = new SlackAdapter(
+      const adapter = new SlackAdapter(
         {
           botToken: config.SLACK_BOT_TOKEN,
           appToken: config.SLACK_APP_TOKEN,
@@ -29,11 +29,12 @@ async function bootstrap() {
         },
         bridge
       );
+      await adapter.start();
+      slackAdapter = adapter;
       bridge.registerAdapter(slackAdapter);
-      await slackAdapter.start();
       console.log('✅ Slack adapter connected successfully.');
-    } catch (err: any) {
-      console.warn(`⚠️ Slack adapter failed to connect: ${err.message}`);
+    } catch (err: unknown) {
+      console.warn('⚠️ Slack adapter failed to connect:', err);
     }
   } else {
     console.log('ℹ️ No SLACK_BOT_TOKEN provided. Running in configuration/API mode.');
