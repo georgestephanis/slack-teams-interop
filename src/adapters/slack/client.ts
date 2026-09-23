@@ -27,6 +27,9 @@ export class SlackAdapter implements BridgeAdapter {
   public platform: Platform = 'slack';
   public app: App;
   public client: WebClient;
+  /** True once auth succeeded and the receiver started */
+  public connected = false;
+  public readonly socketMode: boolean;
   private botUserId?: string;
 
   constructor(
@@ -34,11 +37,18 @@ export class SlackAdapter implements BridgeAdapter {
     private bridge: BridgeCore
   ) {
     const isSocketMode = config.useSocketMode !== false && Boolean(config.appToken);
+    this.socketMode = isSocketMode;
+
+    if (!isSocketMode && !config.signingSecret) {
+      throw new Error(
+        'Slack HTTP mode requires SLACK_SIGNING_SECRET (or set SLACK_APP_TOKEN to use Socket Mode).'
+      );
+    }
 
     this.app = new App({
       token: config.botToken,
       appToken: isSocketMode ? config.appToken : undefined,
-      signingSecret: config.signingSecret || 'temporary-secret',
+      signingSecret: config.signingSecret,
       socketMode: isSocketMode,
       logLevel: LogLevel.WARN,
     });
@@ -55,6 +65,7 @@ export class SlackAdapter implements BridgeAdapter {
     }
 
     await this.app.start();
+    this.connected = true;
   }
 
   private setupEventListeners(): void {
