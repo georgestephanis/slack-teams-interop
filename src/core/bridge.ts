@@ -53,7 +53,7 @@ export class BridgeCore extends EventEmitter {
       }
 
       // 2. Check if this is an echo of a relayed message
-      if (this.dedup.isEcho(msg.sourceChannelId, msg.content)) {
+      if (this.dedup.isEcho(msg.sourcePlatform, msg.sourceChannelId, msg.sourceMessageId)) {
         return;
       }
 
@@ -103,7 +103,7 @@ export class BridgeCore extends EventEmitter {
       );
 
       // 6. Suppress echoes from target channel
-      this.dedup.markRelayed(targetChannelId, msg.content);
+      this.dedup.markRelayed(targetPlatform, targetChannelId, result.messageId);
 
       // 7. Record the message ID pair for threading continuity
       if (msg.sourcePlatform === 'slack') {

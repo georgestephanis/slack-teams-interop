@@ -139,4 +139,55 @@ describe('BridgeCore E2E Simulation', () => {
     await bridge.handleIncomingMessage(botMessage);
     expect(mockTeamsAdapter.sendMessage).not.toHaveBeenCalled();
   });
+
+  it('does not drop a genuine reply that matches recently relayed text', async () => {
+    const base = { sender: { platformId: 'U_ALICE', displayName: 'Alice', platform: 'slack' as const }, timestamp: new Date() };
+
+    await bridge.handleIncomingMessage({
+      ...base,
+      id: 'slack-thanks',
+      sourcePlatform: 'slack',
+      sourceChannelId: 'C_SLACK_1',
+      sourceMessageId: '1711000000.000200',
+      content: 'thanks!',
+    });
+
+    await bridge.handleIncomingMessage({
+      ...base,
+      id: 'teams-thanks',
+      sourcePlatform: 'teams',
+      sourceChannelId: '19:teams_chan@thread.tacv2',
+      sourceMessageId: 'teams-thanks-1',
+      sender: { platformId: 'AAD_BOB', displayName: 'Bob', platform: 'teams' },
+      content: 'thanks!',
+    });
+
+    expect(mockTeamsAdapter.sendMessage).toHaveBeenCalledTimes(1);
+    expect(mockSlackAdapter.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('suppresses the echo of a message the bridge itself posted', async () => {
+    await bridge.handleIncomingMessage({
+      id: 'slack-hello',
+      sourcePlatform: 'slack',
+      sourceChannelId: 'C_SLACK_1',
+      sourceMessageId: '1711000000.000300',
+      sender: { platformId: 'U_ALICE', displayName: 'Alice', platform: 'slack' },
+      content: '*hello*',
+      timestamp: new Date(),
+    });
+
+    // Teams delivers our own post back with the ID it returned, and translated content
+    await bridge.handleIncomingMessage({
+      id: 'teams-echo',
+      sourcePlatform: 'teams',
+      sourceChannelId: '19:teams_chan@thread.tacv2',
+      sourceMessageId: 'teams-id-5678',
+      sender: { platformId: 'unrecognized', displayName: 'InterBridge', platform: 'teams' },
+      content: '**[Slack] Alice**\n\n**hello**',
+      timestamp: new Date(),
+    });
+
+    expect(mockSlackAdapter.sendMessage).not.toHaveBeenCalled();
+  });
 });
