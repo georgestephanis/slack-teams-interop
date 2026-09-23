@@ -66,14 +66,14 @@ Routing is hardcoded as a Slack⇄Teams pair in `bridge.ts`. A third platform ne
 ## Invariants and gotchas
 
 - **Loop prevention is load-bearing.** Every path that posts to a platform must keep both the bot-sender check and the echo check intact. If you add a new outbound path (edits, files, reactions), make sure the bridge ignores its own resulting events. Otherwise two bridged channels will ping-pong.
-- **`BridgeCore` is an `EventEmitter` that emits `'error'`.** An `'error'` event with no listener throws. Keep a listener registered in `src/index.ts`, and add one in any test or script that can hit an error path.
+- **`BridgeCore` is an `EventEmitter` that emits `'error'`.** An `'error'` event with no listener throws in Node.js. Always ensure an error listener is registered on `bridge` (such as in `src/index.ts`) and in any test or script that exercises failure paths.
 - **ESM with `NodeNext` resolution.** Relative imports in `.ts` files must use the `.js` extension (`import { x } from './types.js'`).
 - **Toolchain versions are new.** TypeScript 7, Vitest 5, Express 5, and Zod 4. Check current APIs rather than relying on older patterns (for example, Express 5 path syntax and Zod 4 `.default()` semantics).
 - **`options.syncEdits`, `syncDeletes`, and `syncFiles` are declared but not implemented.** The Slack adapter drops `message_changed` and `message_deleted`, and nothing transfers files. Don't assume these features work. If you implement one, update the README feature list to match.
 - **No schema migrations.** Tables are created with `IF NOT EXISTS`, so altering a column in `initTables()` will **not** affect existing deployments. Any schema change needs an explicit migration step (e.g. `PRAGMA user_version`).
 - **Teams `serviceUrl` is cached in memory only.** After a restart, outbound posts to a channel use `TEAMS_SERVICE_URL` until that channel sends an inbound activity. Keep this in mind when debugging region-specific (EMEA/APAC) failures.
-- **Teams addresses the bot as `28:<appId>`**, not the bare app ID. Account for both forms when comparing sender IDs.
-- **`/api/messages` is authenticated by the Bot Framework adapter** (it validates Azure-issued JWTs). It must stay reachable without admin credentials. Every other admin route should require them. Don't add unauthenticated routes that read or modify mappings.
+- **Teams addresses the bot as `28:<appId>`**, not just the bare app ID. Account for both forms when comparing sender IDs or registering bot IDs.
+- **`/api/messages` is authenticated by the Bot Framework adapter** (it validates Azure-issued JWTs). It must stay reachable without admin credentials. All other management endpoints (`/api/mappings`, etc.) and the dashboard require admin auth. When modifying routing, ensure `/api/messages` and liveness probes stay exempt from basic auth.
 - **Dashboard HTML is built with template strings.** Pass every server-supplied value through `escapeHtml()` in `public/app.js`, including values in attributes.
 - **Tests write real SQLite files** under `./data/` and delete them in `afterEach`. Use a unique filename per spec file so parallel runs don't collide.
 - **`public/teams-app.zip` is committed and served** by `/api/manifests/teams`. Run `npm run package:teams` after editing `manifests/teams/`. The manifest's `botId` is a placeholder the operator must replace.
