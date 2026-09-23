@@ -97,5 +97,13 @@ describe('MessageTranslator', () => {
       expect(MessageTranslator.teamsReactionToSlack('Surprised')).toBe('open_mouth');
       expect(MessageTranslator.teamsReactionToSlack('unknown')).toBeUndefined();
     });
+
+    it('maps Slack emoji names to Teams reaction types', () => {
+      expect(MessageTranslator.slackReactionToTeams('+1')).toBe('like');
+      expect(MessageTranslator.slackReactionToTeams('thumbsup')).toBe('like');
+      expect(MessageTranslator.slackReactionToTeams(':heart:')).toBe('heart');
+      expect(MessageTranslator.slackReactionToTeams('joy')).toBe('laugh');
+      expect(MessageTranslator.slackReactionToTeams('unknown_emoji')).toBeUndefined();
+    });
   });
 });
