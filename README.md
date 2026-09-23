@@ -17,7 +17,7 @@
   - **In Slack**: Teams messages arrive showing the sender's real name and avatar (`chat:write.customize`), looking like native participants.
   - **In Teams**: Slack messages display in clean Markdown (`**[Slack] Jane Doe**: ...`) or sleek **Adaptive Cards** with avatar badges.
 - **Bi-Directional Thread Continuity**: Parent/child reply hierarchies are preserved across both platforms via SQLite message ID mapping.
-- **Echo & Loop Prevention**: Real-time content hashing and bot ID filtering prevent infinite relay loops.
+- **Echo & Loop Prevention**: Relayed message-ID tracking and bot ID filtering prevent infinite relay loops.
 - **Zero Inbound Ports for Slack (Socket Mode)**: Connects to Slack via secure outbound WebSocket. Only the Teams Bot Framework endpoint needs public HTTPS access (compatible with Cloudflare Tunnel, Caddy, or standard reverse proxies).
 - **Matrix.org Protocol Compatibility**: Uses a protocol-neutral normalized event model inspired by Matrix `m.room.message` events.
 - **Modern Web Admin Dashboard**: Sleek dark-mode management UI to create channel bridges, monitor live message feeds, run diagnostic tests, and download app manifests.
@@ -40,7 +40,7 @@
 |   +-----------------------------------------------------------------------+   |
 |   |                       Core Orchestrator                               |   |
 |   |  - Dialect Translator (Slack mrkdwn <-> Teams CommonMark/HTML)        |   |
-|   |  - Deduplication & Echo Manager (LRU Hash Cache)                      |   |
+|   |  - Deduplication & Echo Manager (LRU Message-ID Cache)                   |   |
 |   |  - Thread Mapper (Parent/Child Resolution)                            |   |
 |   |  - Matrix Protocol Adapter (m.room.message schema)                    |   |
 |   +-----------------------------------------------------------------------+   |

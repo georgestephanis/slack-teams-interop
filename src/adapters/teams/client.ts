@@ -78,8 +78,8 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
         }
       }
 
-      // Check if message is from the bot itself
-      if (activity.from?.id === this.botAppId) {
+      // Check if message is from the bot itself (Teams uses `28:<appId>` for bot senders)
+      if (activity.from?.id === this.botAppId || activity.from?.id === `28:${this.botAppId}`) {
         await next();
         return;
       }

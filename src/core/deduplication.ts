@@ -4,7 +4,6 @@
  */
 
 import { LRUCache } from 'lru-cache';
-import crypto from 'node:crypto';
 import { Platform } from './types.js';
 
 export interface DeduplicationOptions {
@@ -31,12 +30,16 @@ export class DeduplicationManager {
 
   /**
    * Register a bot ID for a platform to automatically filter its own messages.
+   * Teams addresses bots as `28:<appId>`, so both forms are registered.
    */
   registerBotId(platform: Platform, botId: string): void {
     if (!botId) return;
     const set = this.knownBotIds.get(platform);
     if (set) {
       set.add(botId);
+      if (platform === 'teams' && !botId.startsWith('28:')) {
+        set.add(`28:${botId}`);
+      }
     }
   }
 
@@ -49,34 +52,26 @@ export class DeduplicationManager {
   }
 
   /**
-   * Compute a deterministic hash for a message based on channel, content, and approximate timestamp.
+   * Record a message the bridge just posted, keyed by the ID the target platform returned.
+   * If that platform later delivers the same message back to us, isEcho() will match it.
+   *
+   * Keying on message ID (rather than content) means a human who happens to type the same
+   * text in the other channel is never mistaken for an echo.
    */
-  computeHash(channelId: string, content: string): string {
-    const normalized = content.trim().replace(/\s+/g, ' ');
-    return crypto
-      .createHash('sha256')
-      .update(`${channelId}:${normalized}`)
-      .digest('hex');
+  markRelayed(platform: Platform, channelId: string, messageId: string): void {
+    if (!messageId) return;
+    this.cache.set(this.key(platform, channelId, messageId), true);
   }
 
   /**
-   * Mark a message as being sent out by the bridge.
+   * Check if an incoming message is one the bridge itself posted.
    */
-  markRelayed(targetChannelId: string, content: string): void {
-    const hash = this.computeHash(targetChannelId, content);
-    this.cache.set(hash, true);
+  isEcho(platform: Platform, channelId: string, messageId: string): boolean {
+    return this.cache.has(this.key(platform, channelId, messageId));
   }
 
-  /**
-   * Check if an incoming message is an echo of a recently relayed message.
-   * If it is an echo, return true and keep it suppressed.
-   */
-  isEcho(channelId: string, content: string): boolean {
-    const hash = this.computeHash(channelId, content);
-    if (this.cache.has(hash)) {
-      return true;
-    }
-    return false;
+  private key(platform: Platform, channelId: string, messageId: string): string {
+    return `${platform}:${channelId}:${messageId}`;
   }
 
   /**

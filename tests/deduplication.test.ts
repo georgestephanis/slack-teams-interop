@@ -10,25 +10,31 @@ describe('DeduplicationManager', () => {
     expect(dedup.isBotSender('slack', 'U999999')).toBe(false);
   });
 
-  it('detects and suppresses echoes after marking relayed', () => {
+  it('treats Teams 28:-prefixed bot IDs as the same bot', () => {
     const dedup = new DeduplicationManager();
-    const channelId = '19:channel@thread.tacv2';
-    const message = 'Hello everyone from the bridge!';
+    dedup.registerBotId('teams', 'app-guid');
 
-    expect(dedup.isEcho(channelId, message)).toBe(false);
-
-    dedup.markRelayed(channelId, message);
-
-    expect(dedup.isEcho(channelId, message)).toBe(true);
-    // Different channel should not be marked
-    expect(dedup.isEcho('other-channel', message)).toBe(false);
+    expect(dedup.isBotSender('teams', 'app-guid')).toBe(true);
+    expect(dedup.isBotSender('teams', '28:app-guid')).toBe(true);
   });
 
-  it('normalizes whitespace in hash comparison', () => {
+  it('detects echoes by platform, channel, and message ID', () => {
     const dedup = new DeduplicationManager();
-    const channelId = 'C012345';
-    dedup.markRelayed(channelId, 'Line 1\n  Line 2');
+    const channelId = '19:channel@thread.tacv2';
 
-    expect(dedup.isEcho(channelId, 'Line 1 Line 2')).toBe(true);
+    expect(dedup.isEcho('teams', channelId, 'msg-1')).toBe(false);
+
+    dedup.markRelayed('teams', channelId, 'msg-1');
+
+    expect(dedup.isEcho('teams', channelId, 'msg-1')).toBe(true);
+    expect(dedup.isEcho('teams', channelId, 'msg-2')).toBe(false);
+    expect(dedup.isEcho('teams', 'other-channel', 'msg-1')).toBe(false);
+    expect(dedup.isEcho('slack', channelId, 'msg-1')).toBe(false);
+  });
+
+  it('ignores empty message IDs', () => {
+    const dedup = new DeduplicationManager();
+    dedup.markRelayed('slack', 'C1', '');
+    expect(dedup.isEcho('slack', 'C1', '')).toBe(false);
   });
 });

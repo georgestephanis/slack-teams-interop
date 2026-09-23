@@ -9,7 +9,7 @@ We have designed, investigated, and implemented **InterBridge**, a self-hosted, 
 ### A. Core Architecture (`src/core/`)
 - **[types.ts](../src/core/types.ts)**: Protocol-neutral normalized event model inspired by Matrix.org's event schema (`m.room.message`, `m.reaction`, `m.relates_to`).
 - **[translator.ts](../src/core/translator.ts)**: Bidirectional translator between Slack `mrkdwn` and Teams CommonMark/HTML. Converts user mentions, channel mentions, broadcast mentions (`@here`, `@channel`), links, and formats Adaptive Cards.
-- **[deduplication.ts](../src/core/deduplication.ts)**: SHA256 content hashing and LRU cache to filter echoes and known bot senders, preventing infinite relay loops.
+- **[deduplication.ts](../src/core/deduplication.ts)**: LRU cache of relayed message IDs to filter echoes and known bot senders, preventing infinite relay loops.
 - **[thread-mapper.ts](../src/core/thread-mapper.ts)**: Bi-directional parent thread resolution linking Slack timestamps (`1711200000.123456`) and Teams message IDs.
 - **[bridge.ts](../src/core/bridge.ts)**: Central orchestrator handling routing, loop filtering, translation, thread mapping, and adapter dispatch.
 
