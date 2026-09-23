@@ -19,7 +19,7 @@ async function bootstrap() {
   // EventEmitter rethrows them, so failures went unlogged and bubbled into the
   // platform SDKs (e.g. a 500 back to Bot Framework, prompting redelivery).
   bridge.on('error', (err: unknown) => {
-    console.error('❌ Bridge error:', err instanceof Error ? err.message : err);
+    console.error('❌ Bridge error:', err);
   });
 
   // Keep the message ID mapping table bounded (threading/reactions only need recent history).
@@ -29,8 +29,8 @@ async function bootstrap() {
       if (removed > 0) {
         console.log(`🧹 Pruned ${removed} message mappings older than ${config.MESSAGE_RETENTION_DAYS} days.`);
       }
-    } catch (err: any) {
-      console.error(`❌ Failed to prune message mappings: ${err.message}`);
+    } catch (err: unknown) {
+      console.error('❌ Failed to prune message mappings:', err);
     }
   };
   pruneMessages();
@@ -54,8 +54,8 @@ async function bootstrap() {
     try {
       await slackAdapter.start();
       console.log('✅ Slack adapter connected successfully.');
-    } catch (err: any) {
-      console.warn(`⚠️ Slack adapter failed to connect: ${err.message}`);
+    } catch (err: unknown) {
+      console.warn('⚠️ Slack adapter failed to connect:', err);
     }
   } else {
     console.log('ℹ️ No SLACK_BOT_TOKEN provided. Running in configuration/API mode.');
