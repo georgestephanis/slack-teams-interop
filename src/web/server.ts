@@ -255,18 +255,25 @@ export function createWebServer(options: ServerOptions) {
  * HTTP Basic auth guard. Any username is accepted; the password must match ADMIN_PASSWORD.
  */
 function requireAdminAuth(adminPassword: string) {
+  if (!adminPassword || adminPassword.trim().length === 0) {
+    throw new Error('ADMIN_PASSWORD must not be empty');
+  }
+
   const expected = crypto.createHash('sha256').update(adminPassword).digest();
 
   return (req: Request, res: Response, next: NextFunction) => {
     const header = req.headers.authorization || '';
-    const [scheme, encoded] = header.split(' ');
-    if (scheme === 'Basic' && encoded) {
-      const decoded = Buffer.from(encoded, 'base64').toString('utf8');
-      const password = decoded.slice(decoded.indexOf(':') + 1);
-      const actual = crypto.createHash('sha256').update(password).digest();
-      if (crypto.timingSafeEqual(actual, expected)) {
-        next();
-        return;
+    const match = header.match(/^Basic\s+(.+)$/i);
+    if (match) {
+      const decoded = Buffer.from(match[1], 'base64').toString('utf8');
+      const colonIdx = decoded.indexOf(':');
+      if (colonIdx !== -1) {
+        const password = decoded.slice(colonIdx + 1);
+        const actual = crypto.createHash('sha256').update(password).digest();
+        if (crypto.timingSafeEqual(actual, expected)) {
+          next();
+          return;
+        }
       }
     }
 
