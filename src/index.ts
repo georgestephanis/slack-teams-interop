@@ -15,6 +15,28 @@ async function bootstrap() {
   // 1. Initialize Bridge Core & Database
   const bridge = new BridgeCore(config.DATABASE_PATH);
 
+  // BridgeCore reports relay failures via 'error' events. Without a listener,
+  // EventEmitter rethrows them, so failures went unlogged and bubbled into the
+  // platform SDKs (e.g. a 500 back to Bot Framework, prompting redelivery).
+  bridge.on('error', (err: unknown) => {
+    console.error('❌ Bridge error:', err instanceof Error ? err.message : err);
+  });
+
+  // Keep the message ID mapping table bounded (threading/reactions only need recent history).
+  const pruneMessages = () => {
+    try {
+      const removed = bridge.db.pruneOldMessages(config.MESSAGE_RETENTION_DAYS);
+      if (removed > 0) {
+        console.log(`🧹 Pruned ${removed} message mappings older than ${config.MESSAGE_RETENTION_DAYS} days.`);
+      }
+    } catch (err: any) {
+      console.error(`❌ Failed to prune message mappings: ${err.message}`);
+    }
+  };
+  pruneMessages();
+  const pruneTimer = setInterval(pruneMessages, 24 * 60 * 60 * 1000);
+  pruneTimer.unref();
+
   // 2. Initialize Slack Adapter (if configured)
   let slackAdapter: SlackAdapter | undefined;
   if (config.SLACK_BOT_TOKEN) {
@@ -75,6 +97,7 @@ async function bootstrap() {
   // Graceful shutdown
   const shutdown = () => {
     console.log('\nShutting down gracefully...');
+    clearInterval(pruneTimer);
     server.close(() => {
       bridge.db.close();
       console.log('Database and server closed.');

@@ -57,7 +57,8 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
     this.adapter = new CloudAdapter(botAuth);
 
     // Setup error handling
-    this.adapter.onTurnError = async (context, error) => {
+    // Report and swallow: rethrowing here returns a 500 to Bot Framework, which redelivers the activity.
+    this.adapter.onTurnError = async (_context, error) => {
       this.bridge.emit('error', new Error(`Teams Turn Error: ${error.message}`));
     };
 

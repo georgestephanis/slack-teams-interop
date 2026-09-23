@@ -11,6 +11,7 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(3978),
   HOST: z.string().default('0.0.0.0'),
   DATABASE_PATH: z.string().default('./data/bridge.sqlite'),
+  MESSAGE_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
 
   // Slack Configuration
   SLACK_BOT_TOKEN: z.string().optional(),
