@@ -105,8 +105,21 @@ npm start
 
 ---
 
+## Security & Environment Access Boundaries
+
+InterBridge is designed with the principle of least privilege, but platform permission architectures differ:
+
+- **Microsoft Teams (Strict Isolation)**: Uses **Resource-Specific Consent (RSC)** with `ChannelMessage.Read.Group`. The app is consented by the Team Owner for a **single Team**. It cannot read messages from other Teams, private channels, 1:1 DMs, Outlook, or SharePoint drives across the tenant.
+- **Slack (Workspace Visibility)**: Uses standard Slack Bot scopes. Note that `channels:history` allows read access across public channels in the workspace. If strict isolation is required on the Slack side, **restrict the bot to a private channel** (using only `groups:history`) or have the Slack-side organization host the bridge.
+- **Data Privacy**: Message body text is processed strictly in-memory and **never written to disk or database**. Only message ID mapping metadata is persisted for thread routing and pruned automatically.
+
+For complete access breakdown, threat models, and hosting ownership guidelines (Agency vs. Client), see **[SECURITY.md](SECURITY.md)**.
+
+---
+
 ## Documentation
 
+- **[Security & Access Control Model](SECURITY.md)**: Permissions breakdown, data boundaries, and hosting ownership guide (Agency vs. Client).
 - **[Implementation Plan & Feasibility Study](docs/implementation_plan.md)**: Deep dive into the API ecosystems, Matrix federation analysis, and design decisions.
 - **[Setup & Deployment Guide](docs/setup_guide.md)**: Step-by-step guide to generating Slack manifests, Azure Bot configuration, and Teams app packaging.
 
