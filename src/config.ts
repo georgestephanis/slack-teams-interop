@@ -28,7 +28,7 @@ const envSchema = z.object({
   TEAMS_SERVICE_URL: z.string().default('https://smba.trafficmanager.net/amer/'),
 
   // Admin UI
-  ADMIN_PASSWORD: z.string().default('admin'),
+  ADMIN_PASSWORD: z.string().min(1, 'ADMIN_PASSWORD must not be empty').default('admin'),
 });
 
 export const config = envSchema.parse(process.env);

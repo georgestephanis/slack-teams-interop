@@ -58,10 +58,15 @@ async function bootstrap() {
     console.log('ℹ️ No TEAMS_APP_ID provided. Running in configuration/API mode.');
   }
 
+  if (config.ADMIN_PASSWORD === 'admin') {
+    console.warn('⚠️ ADMIN_PASSWORD is set to the default "admin". Change it before exposing this service.');
+  }
+
   // 4. Start Web & API Server
   const app = createWebServer({
     port: config.PORT,
     host: config.HOST,
+    adminPassword: config.ADMIN_PASSWORD,
     bridge,
     slackAdapter,
     teamsAdapter,

@@ -93,7 +93,7 @@ TEAMS_TENANT_ID=your-microsoft-tenant-id
 docker compose up -d
 ```
 
-Open `http://localhost:3978` in your browser to access the Admin Dashboard!
+Open `http://localhost:3978` in your browser to access the Admin Dashboard! Your browser will prompt for credentials: any username works, and the password is `ADMIN_PASSWORD`. The dashboard and every `/api/*` route except `/api/messages` (the Teams webhook) and `/api/health/live` sit behind that password. Set a strong one, because the service has to be publicly reachable for Teams.
 
 ### 4. Or Run Locally
 
