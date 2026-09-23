@@ -19,7 +19,6 @@
     "@slack/web-api": "^8.1.1",
     "better-sqlite3": "^13.0.3",
     "botbuilder": "^4.23.3",
-    "cors": "^2.8.6",
     "dotenv": "^18.0.3",
     "express": "^5.2.1",
     "lru-cache": "^11.5.3",
@@ -28,7 +27,6 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
-    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.2",
     "pino-pretty": "^13.1.3",

@@ -3,8 +3,8 @@
  * Hosts the Teams Bot Framework webhook endpoint, Admin REST API, and Dashboard static assets.
  */
 
-import express, { Request, Response } from 'express';
-import cors from 'cors';
+import express, { NextFunction, Request, Response } from 'express';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
 import { BridgeCore } from '../core/bridge.js';
@@ -15,6 +15,8 @@ import { ChannelMapping } from '../core/types.js';
 export interface ServerOptions {
   port: number;
   host: string;
+  /** Password required (via HTTP Basic auth) for the admin UI and REST API */
+  adminPassword: string;
   bridge: BridgeCore;
   slackAdapter?: SlackAdapter;
   teamsAdapter?: TeamsAdapter;
@@ -29,8 +31,6 @@ export function createWebServer(options: ServerOptions) {
     relayedCount++;
   });
 
-  app.use(cors());
-
   // 1. Teams Bot Framework Endpoint (/api/messages)
   // Must use raw body or let botbuilder adapter parse JSON
   app.post('/api/messages', async (req: Request, res: Response) => {
@@ -44,6 +44,15 @@ export function createWebServer(options: ServerOptions) {
       res.status(500).send(err.message);
     }
   });
+
+  // Unauthenticated liveness probe (used by the Docker healthcheck)
+  app.get('/api/health/live', (_req: Request, res: Response) => {
+    res.json({ status: 'ok' });
+  });
+
+  // Everything below is admin surface: require HTTP Basic auth with ADMIN_PASSWORD.
+  // The server must be publicly reachable for the Teams webhook, so this cannot be left open.
+  app.use(requireAdminAuth(options.adminPassword));
 
   // Standard JSON body parsing for API endpoints
   app.use(express.json());
@@ -240,4 +249,28 @@ export function createWebServer(options: ServerOptions) {
   });
 
   return app;
+}
+
+/**
+ * HTTP Basic auth guard. Any username is accepted; the password must match ADMIN_PASSWORD.
+ */
+function requireAdminAuth(adminPassword: string) {
+  const expected = crypto.createHash('sha256').update(adminPassword).digest();
+
+  return (req: Request, res: Response, next: NextFunction) => {
+    const header = req.headers.authorization || '';
+    const [scheme, encoded] = header.split(' ');
+    if (scheme === 'Basic' && encoded) {
+      const decoded = Buffer.from(encoded, 'base64').toString('utf8');
+      const password = decoded.slice(decoded.indexOf(':') + 1);
+      const actual = crypto.createHash('sha256').update(password).digest();
+      if (crypto.timingSafeEqual(actual, expected)) {
+        next();
+        return;
+      }
+    }
+
+    res.setHeader('WWW-Authenticate', 'Basic realm="InterBridge Admin", charset="UTF-8"');
+    res.status(401).json({ error: 'Authentication required' });
+  };
 }

@@ -174,8 +174,8 @@ document.addEventListener('DOMContentLoaded', () => {
               </span>
             </td>
             <td>
-              <button class="btn btn-sm btn-outline btn-test" data-id="${m.id}" title="Send test diagnostic message">Test</button>
-              <button class="btn-danger-sm btn-delete" data-id="${m.id}" title="Delete bridge">Delete</button>
+              <button class="btn btn-sm btn-outline btn-test" data-id="${escapeHtml(m.id)}" title="Send test diagnostic message">Test</button>
+              <button class="btn-danger-sm btn-delete" data-id="${escapeHtml(m.id)}" title="Delete bridge">Delete</button>
             </td>
           </tr>
         `;
@@ -195,7 +195,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function sendTestMessage(id) {
     try {
       addLog(`Sending test message across bridge ID: ${id}...`);
-      const res = await fetch(`/api/mappings/${id}/test`, { method: 'POST' });
+      const res = await fetch(`/api/mappings/${encodeURIComponent(id)}/test`, { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
         addLog(`Test message sent: ${data.message}`);
@@ -210,7 +210,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function deleteMapping(id) {
     if (!confirm('Are you sure you want to delete this channel bridge?')) return;
     try {
-      const res = await fetch(`/api/mappings/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/mappings/${encodeURIComponent(id)}`, { method: 'DELETE' });
       if (res.ok) {
         addLog(`Deleted channel bridge: ${id}`);
         loadDashboard();
@@ -236,6 +236,7 @@ document.addEventListener('DOMContentLoaded', () => {
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 });
