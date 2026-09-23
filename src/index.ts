@@ -41,18 +41,19 @@ async function bootstrap() {
   let slackAdapter: SlackAdapter | undefined;
   if (config.SLACK_BOT_TOKEN) {
     console.log('⚡ Starting Slack adapter...');
-    slackAdapter = new SlackAdapter(
-      {
-        botToken: config.SLACK_BOT_TOKEN,
-        appToken: config.SLACK_APP_TOKEN,
-        signingSecret: config.SLACK_SIGNING_SECRET,
-        useSocketMode: config.SLACK_USE_SOCKET_MODE,
-      },
-      bridge
-    );
-    bridge.registerAdapter(slackAdapter);
     try {
-      await slackAdapter.start();
+      const adapter = new SlackAdapter(
+        {
+          botToken: config.SLACK_BOT_TOKEN,
+          appToken: config.SLACK_APP_TOKEN,
+          signingSecret: config.SLACK_SIGNING_SECRET,
+          useSocketMode: config.SLACK_USE_SOCKET_MODE,
+        },
+        bridge
+      );
+      await adapter.start();
+      slackAdapter = adapter;
+      bridge.registerAdapter(slackAdapter);
       console.log('✅ Slack adapter connected successfully.');
     } catch (err: unknown) {
       console.warn('⚠️ Slack adapter failed to connect:', err);

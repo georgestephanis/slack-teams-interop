@@ -75,8 +75,8 @@ export function createWebServer(options: ServerOptions) {
       activeBridges,
       slack: {
         configured: Boolean(slackAdapter),
-        connected: Boolean(slackAdapter),
-        socketMode: true,
+        connected: slackAdapter?.connected ?? false,
+        socketMode: slackAdapter?.socketMode ?? false,
       },
       teams: {
         configured: Boolean(teamsAdapter),
