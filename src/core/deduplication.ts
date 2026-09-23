@@ -36,9 +36,12 @@ export class DeduplicationManager {
     if (!botId) return;
     const set = this.knownBotIds.get(platform);
     if (set) {
-      set.add(botId);
-      if (platform === 'teams' && !botId.startsWith('28:')) {
-        set.add(`28:${botId}`);
+      if (platform === 'teams') {
+        const bare = botId.replace(/^28:/, '');
+        set.add(bare);
+        set.add(`28:${bare}`);
+      } else {
+        set.add(botId);
       }
     }
   }
@@ -71,7 +74,7 @@ export class DeduplicationManager {
   }
 
   private key(platform: Platform, channelId: string, messageId: string): string {
-    return `${platform}:${channelId}:${messageId}`;
+    return `${platform}\0${channelId}\0${messageId}`;
   }
 
   /**

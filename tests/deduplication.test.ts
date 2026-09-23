@@ -10,15 +10,19 @@ describe('DeduplicationManager', () => {
     expect(dedup.isBotSender('slack', 'U999999')).toBe(false);
   });
 
-  it('treats Teams 28:-prefixed bot IDs as the same bot', () => {
-    const dedup = new DeduplicationManager();
-    dedup.registerBotId('teams', 'app-guid');
+  it('treats Teams 28:-prefixed bot IDs as the same bot regardless of registration format', () => {
+    const dedup1 = new DeduplicationManager();
+    dedup1.registerBotId('teams', 'app-guid');
+    expect(dedup1.isBotSender('teams', 'app-guid')).toBe(true);
+    expect(dedup1.isBotSender('teams', '28:app-guid')).toBe(true);
 
-    expect(dedup.isBotSender('teams', 'app-guid')).toBe(true);
-    expect(dedup.isBotSender('teams', '28:app-guid')).toBe(true);
+    const dedup2 = new DeduplicationManager();
+    dedup2.registerBotId('teams', '28:app-guid');
+    expect(dedup2.isBotSender('teams', 'app-guid')).toBe(true);
+    expect(dedup2.isBotSender('teams', '28:app-guid')).toBe(true);
   });
 
-  it('detects echoes by platform, channel, and message ID', () => {
+  it('detects echoes by platform, channel, and message ID without delimiter collision', () => {
     const dedup = new DeduplicationManager();
     const channelId = '19:channel@thread.tacv2';
 
@@ -30,6 +34,10 @@ describe('DeduplicationManager', () => {
     expect(dedup.isEcho('teams', channelId, 'msg-2')).toBe(false);
     expect(dedup.isEcho('teams', 'other-channel', 'msg-1')).toBe(false);
     expect(dedup.isEcho('slack', channelId, 'msg-1')).toBe(false);
+
+    // Verify channel IDs and message IDs with colons do not collide
+    dedup.markRelayed('teams', 'chan:1', 'msg');
+    expect(dedup.isEcho('teams', 'chan', '1:msg')).toBe(false);
   });
 
   it('ignores empty message IDs', () => {
