@@ -1,0 +1,48 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "1.0.0",
+  "id": "e86b2d18-508b-4a57-897d-419b48c03632",
+  "packageName": "com.interbridge.teams",
+  "developer": {
+    "name": "InterBridge Self-Hosted",
+    "websiteUrl": "https://github.com/georgestephanis/slack-teams-interop",
+    "privacyUrl": "https://github.com/georgestephanis/slack-teams-interop",
+    "termsOfUseUrl": "https://github.com/georgestephanis/slack-teams-interop"
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "name": {
+    "short": "InterBridge",
+    "full": "InterBridge Slack-Teams Interop"
+  },
+  "description": {
+    "short": "Two-way channel bridge connecting Microsoft Teams to Slack",
+    "full": "Bridges messages, threads, reactions, and files between Microsoft Teams and Slack channels using Resource-Specific Consent."
+  },
+  "accentColor": "#6366f1",
+  "bots": [
+    {
+      "botId": "YOUR_AZURE_BOT_APP_ID",
+      "scopes": ["team"],
+      "supportsFiles": true,
+      "isNotificationOnly": false
+    }
+  ],
+  "authorization": {
+    "permissions": {
+      "resourceSpecific": [
+        {
+          "name": "ChannelMessage.Read.Group",
+          "type": "Application"
+        }
+      ]
+    }
+  },
+  "validDomains": [
+    "*.trafficmanager.net",
+    "*.botframework.com"
+  ]
+}

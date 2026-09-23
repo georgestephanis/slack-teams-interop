@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  interbridge:
+    build: .
+    container_name: interbridge
+    restart: unless-stopped
+    ports:
+      - "3978:3978"
+    volumes:
+      - ./data:/data
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3978/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

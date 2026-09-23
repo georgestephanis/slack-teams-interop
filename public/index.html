@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Slack <-> Teams Bridge Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="navbar">
+      <div class="brand">
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v1" />
+            <path d="M18 8h4a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-4" />
+            <circle cx="8" cy="12" r="2" />
+            <path d="M21 12h-3" />
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>InterBridge</h1>
+          <span class="badge">Self-Hosted Slack &amp; Teams Interop</span>
+        </div>
+      </div>
+      <div class="nav-actions">
+        <button id="btn-refresh" class="btn btn-secondary">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M23 4v6h-6M1 20v-6h6"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          </svg>
+          Refresh
+        </button>
+        <button id="btn-add-mapping" class="btn btn-primary">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="12" y1="5" x2="12" y2="19"/>
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          Add Channel Bridge
+        </button>
+      </div>
+    </header>
+
+    <!-- Metrics Row -->
+    <section class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-title">Active Bridges</span>
+          <span class="metric-icon slack-teams-icon">🔗</span>
+        </div>
+        <div class="metric-value" id="metric-bridges">0</div>
+        <div class="metric-subtext">Mapped channel pairs</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-title">Relayed Messages</span>
+          <span class="metric-icon">💬</span>
+        </div>
+        <div class="metric-value" id="metric-messages">0</div>
+        <div class="metric-subtext">Two-way synchronized</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-title">Slack Status</span>
+          <span class="metric-icon slack-icon">#</span>
+        </div>
+        <div class="metric-value status-indicator" id="metric-slack-status">
+          <span class="status-dot"></span> <span class="status-label">Checking...</span>
+        </div>
+        <div class="metric-subtext" id="metric-slack-mode">Socket Mode</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-header">
+          <span class="metric-title">Teams Status</span>
+          <span class="metric-icon teams-icon">T</span>
+        </div>
+        <div class="metric-value status-indicator" id="metric-teams-status">
+          <span class="status-dot"></span> <span class="status-label">Checking...</span>
+        </div>
+        <div class="metric-subtext" id="metric-teams-mode">RSC Listener Ready</div>
+      </div>
+    </section>
+
+    <!-- Main Content: Mappings Table & Live Feed -->
+    <main class="content-grid">
+      <section class="card mappings-section">
+        <div class="card-header">
+          <h2>Channel Bridges</h2>
+          <span class="counter" id="mapping-count">0 channels</span>
+        </div>
+        <div class="table-container">
+          <table class="data-table" id="mappings-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Slack Channel</th>
+                <th>Teams Channel</th>
+                <th>Format</th>
+                <th>Features</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="mappings-tbody">
+              <tr>
+                <td colspan="7" class="empty-state">No channel bridges configured yet. Click "Add Channel Bridge" to get started.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Live Activity Log -->
+      <section class="card activity-section">
+        <div class="card-header">
+          <h2>Live Bridge Feed</h2>
+          <span class="live-pulse"><span class="pulse-dot"></span> Live</span>
+        </div>
+        <div class="activity-feed" id="activity-feed">
+          <div class="feed-item system-log">
+            <span class="feed-time">Just now</span>
+            <span class="feed-text">InterBridge engine initialized and listening.</span>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Setup Guide Card -->
+    <section class="card setup-guide-card">
+      <div class="card-header">
+        <h2>App Manifests &amp; Rapid Setup</h2>
+      </div>
+      <div class="guide-grid">
+        <div class="guide-step">
+          <div class="step-badge">1</div>
+          <div class="step-info">
+            <h3>Slack App (1-Click)</h3>
+            <p>Paste the pre-configured Slack App manifest into Slack API dashboard to create your app with all needed bot permissions.</p>
+            <a href="/api/manifests/slack" target="_blank" class="btn btn-sm btn-outline">Download Slack Manifest</a>
+          </div>
+        </div>
+        <div class="guide-step">
+          <div class="step-badge">2</div>
+          <div class="step-info">
+            <h3>Teams App (RSC Consent)</h3>
+            <p>Deploy the custom Teams App zip containing <code>ChannelMessage.Read.Group</code> permission so Team Owners can install it without tenant Global Admin approval.</p>
+            <a href="/api/manifests/teams" target="_blank" class="btn btn-sm btn-outline">Download Teams App Package</a>
+          </div>
+        </div>
+        <div class="guide-step">
+          <div class="step-badge">3</div>
+          <div class="step-info">
+            <h3>Azure Bot Service (Free F0)</h3>
+            <p>Register a free Azure AI Bot with your Messaging endpoint set to <code>https://your-domain/api/messages</code>.</p>
+            <button class="btn btn-sm btn-outline" id="btn-copy-webhook">Copy Webhook URL</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Modal: Add / Edit Mapping -->
+  <div class="modal-overlay hidden" id="modal-mapping">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modal-title">New Channel Bridge</h3>
+        <button class="btn-close" id="btn-modal-close">&times;</button>
+      </div>
+      <form id="form-mapping">
+        <input type="hidden" id="mapping-id" value="">
+
+        <div class="form-group">
+          <label for="mapping-name">Bridge Name</label>
+          <input type="text" id="mapping-name" class="form-control" placeholder="e.g. Acme Corp Sync" required>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group col">
+            <label for="slack-channel-id">Slack Channel ID</label>
+            <input type="text" id="slack-channel-id" class="form-control" placeholder="e.g. C0123456789" required>
+            <small>Find in Slack: Right click channel > Copy link (last part of URL)</small>
+          </div>
+          <div class="form-group col">
+            <label for="slack-channel-name">Slack Channel Name</label>
+            <input type="text" id="slack-channel-name" class="form-control" placeholder="#project-acme">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group col">
+            <label for="teams-team-id">Teams Team ID</label>
+            <input type="text" id="teams-team-id" class="form-control" placeholder="e.g. 19:xxxx@thread.tacv2" required>
+          </div>
+          <div class="form-group col">
+            <label for="teams-channel-id">Teams Channel ID</label>
+            <input type="text" id="teams-channel-id" class="form-control" placeholder="e.g. 19:yyyy@thread.tacv2" required>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="teams-format-style">Teams Display Style</label>
+          <select id="teams-format-style" class="form-control">
+            <option value="adaptive_card">Adaptive Card (Rich card with avatar badge)</option>
+            <option value="clean_markdown">Clean Markdown (**[Slack] Name**: Text)</option>
+          </select>
+        </div>
+
+        <div class="form-group options-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="sync-threads" checked> Sync Threaded Replies
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="sync-reactions" checked> Sync Emoji Reactions
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="sync-files" checked> Sync File Attachments
+          </label>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="btn-modal-cancel">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="btn-modal-save">Save Bridge</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

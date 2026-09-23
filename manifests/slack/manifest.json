@@ -1,0 +1,42 @@
+{
+  "display_information": {
+    "name": "InterBridge (Slack-Teams)",
+    "description": "Real-time two-way bridge connecting Slack channels to Microsoft Teams",
+    "background_color": "#4338ca"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "InterBridge",
+      "always_online": true
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "chat:write",
+        "chat:write.customize",
+        "channels:history",
+        "groups:history",
+        "files:read",
+        "files:write",
+        "reactions:read",
+        "reactions:write",
+        "users:read"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": [
+        "message.channels",
+        "message.groups",
+        "reaction_added",
+        "reaction_removed"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": false
+    },
+    "socket_mode_enabled": true
+  }
+}
