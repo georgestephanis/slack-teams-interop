@@ -198,11 +198,17 @@ export class SlackAdapter implements BridgeAdapter {
     targetMessageId: string,
     reaction: NormalizedReaction
   ): Promise<void> {
+    const name =
+      reaction.sourcePlatform === 'teams'
+        ? MessageTranslator.teamsReactionToSlack(reaction.emoji)
+        : reaction.emoji;
+    if (!name) return;
+
     try {
       await this.client.reactions.add({
         channel: targetChannelId,
         timestamp: targetMessageId,
-        name: reaction.emoji,
+        name,
       });
     } catch (err: unknown) {
       // Ignore already_reacted error

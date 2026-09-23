@@ -145,6 +145,10 @@ export class BridgeCore extends EventEmitter {
    */
   async handleIncomingReaction(reaction: NormalizedReaction): Promise<void> {
     try {
+      if (this.dedup.isBotSender(reaction.sourcePlatform, reaction.sender.platformId)) {
+        return;
+      }
+
       let mapping: ChannelMapping | null = null;
       let targetPlatform: Platform;
       let targetParentMessageId: string | undefined;

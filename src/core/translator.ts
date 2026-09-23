@@ -5,7 +5,27 @@
 
 import { UserIdentity } from './types.js';
 
+/**
+ * Teams reaction types mapped to Slack emoji names.
+ * https://learn.microsoft.com/en-us/microsoftteams/platform/bots/how-to/conversations/subscribe-to-conversation-events#message-reaction-events
+ */
+const TEAMS_TO_SLACK_REACTIONS: Record<string, string> = {
+  like: '+1',
+  heart: 'heart',
+  laugh: 'laughing',
+  surprised: 'open_mouth',
+  sad: 'cry',
+  angry: 'angry',
+};
+
 export class MessageTranslator {
+  /**
+   * Convert a Teams reaction type into a Slack emoji name, or undefined if there is no equivalent.
+   */
+  static teamsReactionToSlack(reactionType: string): string | undefined {
+    return TEAMS_TO_SLACK_REACTIONS[reactionType.toLowerCase()];
+  }
+
   /**
    * Convert Slack mrkdwn into standard Teams Markdown / HTML.
    */

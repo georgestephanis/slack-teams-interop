@@ -89,4 +89,13 @@ describe('MessageTranslator', () => {
       expect(card.body[1].text).toBe('Hello from Slack!');
     });
   });
+
+  describe('Reaction mapping', () => {
+    it('maps Teams reaction types to Slack emoji names', () => {
+      expect(MessageTranslator.teamsReactionToSlack('like')).toBe('+1');
+      expect(MessageTranslator.teamsReactionToSlack('laugh')).toBe('laughing');
+      expect(MessageTranslator.teamsReactionToSlack('Surprised')).toBe('open_mouth');
+      expect(MessageTranslator.teamsReactionToSlack('unknown')).toBeUndefined();
+    });
+  });
 });
