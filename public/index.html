@@ -219,8 +219,17 @@
           <label class="checkbox-label">
             <input type="checkbox" id="sync-reactions" checked> Sync Emoji Reactions
           </label>
+          <label class="checkbox-label" title="Teams bots can't add reactions. Slack reactions always show as a footer on messages the bridge posted; this also posts one thread reply for messages written in Teams.">
+            <input type="checkbox" id="reaction-notices"> Post Slack reactions on Teams-authored messages as a thread reply
+          </label>
           <label class="checkbox-label">
             <input type="checkbox" id="sync-files" checked> Sync File Attachments
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="sync-edits" checked> Sync Message Edits
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="sync-deletes" checked> Sync Message Deletions
           </label>
         </div>
 

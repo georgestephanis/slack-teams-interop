@@ -10,6 +10,11 @@ dotenv.config();
 const envSchema = z.object({
   PORT: z.coerce.number().default(3978),
   HOST: z.string().default('0.0.0.0'),
+  // Public base URL of this service (e.g. https://bridge.example.com), used in generated manifests
+  PUBLIC_URL: z
+    .string()
+    .optional()
+    .transform((val) => (val ? val.replace(/\/+$/, '') : undefined)),
   DATABASE_PATH: z.string().default('./data/bridge.sqlite'),
   MESSAGE_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(30),
 

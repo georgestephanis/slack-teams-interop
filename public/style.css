@@ -596,3 +596,10 @@ code {
   gap: 12px;
   margin-top: 24px;
 }
+
+.warn-note {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.7rem;
+  color: var(--accent-amber);
+}

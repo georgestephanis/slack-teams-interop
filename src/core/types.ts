@@ -24,7 +24,10 @@ export interface Attachment {
   name: string;
   contentType: string;
   size?: number;
-  downloadUrl: string;
+  /** Direct file URL; usually requires the source platform's credentials */
+  downloadUrl?: string;
+  /** Link a person can open to view the file on the source platform (may require access there) */
+  permalink?: string;
   thumbnailUrl?: string;
 }
 
@@ -51,6 +54,15 @@ export interface NormalizedMessage {
   timestamp: Date;
   /** Raw platform payload for specialized adapter processing if needed */
   rawEvent?: unknown;
+}
+
+/** Identifies a message on its source platform (used for deletes). */
+export interface NormalizedMessageRef {
+  sourcePlatform: Platform;
+  sourceChannelId: string;
+  sourceMessageId: string;
+  /** Who performed the action, when known */
+  senderId?: string;
 }
 
 export interface NormalizedReaction {
@@ -86,7 +98,25 @@ export interface ChannelMapping {
     syncDeletes: boolean;
     syncFiles: boolean;
     teamsFormatStyle: 'adaptive_card' | 'clean_markdown';
+    /**
+     * Post Slack reactions to Teams-authored messages as a thread reply (Teams bots can't react).
+     * Reactions to bridge-posted Teams messages are always shown as an in-place footer.
+     */
+    reactionNotices: boolean;
   };
   createdAt: string;
   updatedAt: string;
 }
+
+/**
+ * Defaults applied to mapping options on read. Add new option keys here with their default value.
+ */
+export const DEFAULT_MAPPING_OPTIONS: ChannelMapping['options'] = {
+  syncThreads: true,
+  syncReactions: true,
+  syncEdits: false,
+  syncDeletes: false,
+  syncFiles: false,
+  teamsFormatStyle: 'adaptive_card',
+  reactionNotices: false,
+};

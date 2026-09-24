@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
 import { BridgeCore } from '../core/bridge.js';
-import { SlackAdapter } from '../adapters/slack/client.js';
+import { SLACK_EVENTS_PATH, SlackAdapter } from '../adapters/slack/client.js';
 import { TeamsAdapter } from '../adapters/teams/client.js';
 import { ChannelMapping } from '../core/types.js';
 
@@ -18,6 +18,10 @@ export interface ServerOptions {
   /** Password required (via HTTP Basic auth) for the admin UI and REST API */
   adminPassword: string;
   bridge: BridgeCore;
+  /** Public base URL, used for the Slack Request URL in generated manifests */
+  publicUrl?: string;
+  /** Whether the Slack app is configured for Socket Mode (affects the generated manifest) */
+  slackSocketMode?: boolean;
   slackAdapter?: SlackAdapter;
   teamsAdapter?: TeamsAdapter;
 }
@@ -44,6 +48,12 @@ export function createWebServer(options: ServerOptions) {
       res.status(500).send(err.message);
     }
   });
+
+  // Slack Events API endpoint (HTTP mode only). Authenticated by Slack's signing secret, and
+  // must see the raw body, so it is mounted before admin auth and express.json().
+  if (slackAdapter?.httpRouter) {
+    app.use(slackAdapter.httpRouter);
+  }
 
   // Unauthenticated liveness probe (used by the Docker healthcheck)
   app.get('/api/health/live', (_req: Request, res: Response) => {
@@ -87,7 +97,16 @@ export function createWebServer(options: ServerOptions) {
 
   // Get all channel mappings
   app.get('/api/mappings', (_req: Request, res: Response) => {
-    res.json(bridge.db.getAllChannelMappings());
+    const knownTeamsChannels = bridge.db.getKnownTeamsConversationIds();
+    res.json(
+      bridge.db.getAllChannelMappings().map((m) => ({
+        ...m,
+        status: {
+          // False until the bridge has seen an activity from this Teams channel (see #10)
+          teamsServiceUrlKnown: knownTeamsChannels.has(m.teams.channelId),
+        },
+      }))
+    );
   });
 
   // Create or update mapping
@@ -150,7 +169,12 @@ export function createWebServer(options: ServerOptions) {
   });
 
   // Generate Slack App Manifest JSON
-  app.get('/api/manifests/slack', (_req: Request, res: Response) => {
+  app.get('/api/manifests/slack', (req: Request, res: Response) => {
+    // ?mode=http|socket overrides the running configuration
+    const socketMode =
+      req.query.mode === 'http' ? false : req.query.mode === 'socket' ? true : options.slackSocketMode ?? true;
+    const requestUrl = `${options.publicUrl || 'https://YOUR_PUBLIC_HOST'}${SLACK_EVENTS_PATH}`;
+
     const manifest = {
       display_information: {
         name: 'InterBridge (Slack-Teams)',
@@ -180,10 +204,11 @@ export function createWebServer(options: ServerOptions) {
       },
       settings: {
         event_subscriptions: {
+          ...(socketMode ? {} : { request_url: requestUrl }),
           bot_events: ['message.channels', 'message.groups', 'reaction_added', 'reaction_removed'],
         },
         interactivity: { is_enabled: false },
-        socket_mode_enabled: true,
+        socket_mode_enabled: socketMode,
       },
     };
 

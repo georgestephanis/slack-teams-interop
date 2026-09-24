@@ -26,6 +26,14 @@ This guide walks you through setting up your self-hosted Slack <-> Microsoft Tea
    - Name it `interbridge-socket`, add the `connections:write` scope, and copy the token (`xapp-...`).
 7. Copy your **Bot User OAuth Token** (`xoxb-...`) from **OAuth & Permissions**.
 
+### Alternative: HTTP (Events API) mode
+
+Use this if your organization doesn't allow Socket Mode apps, or you'd rather receive Slack events over HTTPS alongside the Teams webhook.
+
+1. In `.env`, set `SLACK_USE_SOCKET_MODE=false`, set `SLACK_SIGNING_SECRET` (**Basic Information** -> **App Credentials**), and set `PUBLIC_URL` to the bridge's public HTTPS base URL. `SLACK_APP_TOKEN` isn't needed.
+2. Create the app from the manifest generated at `GET /api/manifests/slack?mode=http`. Like the rest of the admin API, it requires the dashboard login (any username, password `ADMIN_PASSWORD`), for example `curl -u admin:$ADMIN_PASSWORD https://<PUBLIC_URL>/api/manifests/slack?mode=http`. This sets `socket_mode_enabled: false` and a Request URL of `<PUBLIC_URL>/slack/events`. Alternatively, edit an existing app's **Event Subscriptions** to use that URL.
+3. Make sure your reverse proxy forwards `/slack/events` to the bridge (same port as `/api/messages`). Like the Teams webhook, it's authenticated by the platform (Slack's request signature), not the admin password. Slack's URL verification challenge is answered automatically once the bridge is running.
+
 ---
 
 ## 3. Microsoft Teams Setup (Resource-Specific Consent)
@@ -82,6 +90,8 @@ TEAMS_APP_PASSWORD=your-azure-bot-app-secret
 TEAMS_TENANT_ID=your-microsoft-tenant-id
 TEAMS_SERVICE_URL=https://smba.trafficmanager.net/amer/
 ```
+
+> **About `TEAMS_SERVICE_URL`:** Bot Framework routes proactive posts through a region-specific service URL. The bridge learns the correct URL from the first activity it receives from a team (installing the app counts), and stores it in the database. `TEAMS_SERVICE_URL` is only a fallback for channels it hasn't heard from yet. If your tenant is outside the Americas, set it to your region's endpoint (for example `https://smba.trafficmanager.net/emea/` or `.../apac/`). The dashboard flags mappings whose Teams channel hasn't been seen yet.
 
 ---
 
