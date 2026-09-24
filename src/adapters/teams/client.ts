@@ -166,6 +166,8 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
       const reactions = action === 'add' ? activity.reactionsAdded : activity.reactionsRemoved;
       const messageId = activity.replyToId || activity.id || '';
       const teamsChannelId = this.channelIdOf(activity);
+      // Outside a channel (or if Teams omits ids) there's nothing to key the reaction to
+      if (!messageId || !teamsChannelId) return;
 
       for (const r of reactions || []) {
         await this.bridge.handleIncomingReaction({
