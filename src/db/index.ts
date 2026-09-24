@@ -193,6 +193,54 @@ export class BridgeDatabase {
     return res.changes;
   }
 
+  // --- Teams Service URL Methods ---
+
+  saveTeamsServiceUrl(conversationId: string, serviceUrl: string, teamId?: string, tenantId?: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO teams_conversations (conversation_id, team_id, tenant_id, service_url, updated_at)
+         VALUES (?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(conversation_id) DO UPDATE SET
+           team_id = COALESCE(excluded.team_id, teams_conversations.team_id),
+           tenant_id = COALESCE(excluded.tenant_id, teams_conversations.tenant_id),
+           service_url = excluded.service_url,
+           updated_at = datetime('now')`
+      )
+      .run(conversationId, teamId || null, tenantId || null, serviceUrl);
+  }
+
+  /**
+   * Find the best-known service URL for a Teams channel: exact conversation, then any
+   * conversation in the same team, then the most recently seen URL (service URLs are
+   * per-tenant region, and most deployments bridge a single tenant).
+   */
+  findTeamsServiceUrl(conversationId: string, teamId?: string): string | undefined {
+    const exact = this.db
+      .prepare('SELECT service_url FROM teams_conversations WHERE conversation_id = ?')
+      .get(conversationId) as { service_url: string } | undefined;
+    if (exact) return exact.service_url;
+
+    if (teamId) {
+      const team = this.db
+        .prepare(
+          'SELECT service_url FROM teams_conversations WHERE team_id = ? OR conversation_id = ? ORDER BY updated_at DESC LIMIT 1'
+        )
+        .get(teamId, teamId) as { service_url: string } | undefined;
+      if (team) return team.service_url;
+    }
+
+    const latest = this.db
+      .prepare('SELECT service_url FROM teams_conversations ORDER BY updated_at DESC LIMIT 1')
+      .get() as { service_url: string } | undefined;
+    return latest?.service_url;
+  }
+
+  hasTeamsServiceUrl(conversationId: string): boolean {
+    return Boolean(
+      this.db.prepare('SELECT 1 FROM teams_conversations WHERE conversation_id = ?').get(conversationId)
+    );
+  }
+
   // --- User Cache Methods ---
 
   cacheUser(platform: string, platformId: string, displayName: string, avatarUrl?: string, email?: string): void {

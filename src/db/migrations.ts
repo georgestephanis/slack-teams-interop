@@ -61,6 +61,21 @@ export const migrations: Migration[] = [
       );
     `);
   },
+
+  // 2: Persist Teams Bot Framework service URLs (region-specific) learned from inbound activities.
+  (db) => {
+    db.exec(`
+      CREATE TABLE teams_conversations (
+        conversation_id TEXT PRIMARY KEY,
+        team_id TEXT,
+        tenant_id TEXT,
+        service_url TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_tc_team ON teams_conversations (team_id);
+      CREATE INDEX idx_tc_updated ON teams_conversations (updated_at);
+    `);
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = migrations.length;

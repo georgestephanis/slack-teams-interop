@@ -34,7 +34,9 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
   public platform: Platform = 'teams';
   public adapter: CloudAdapter;
   private botAppId: string;
+  /** In-memory cache in front of the persisted teams_conversations table */
   private serviceUrlMap = new Map<string, string>();
+  private warnedFallbackChannels = new Set<string>();
 
   constructor(
     private config: TeamsAdapterConfig,
@@ -67,18 +69,16 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
   }
 
   private setupHandlers(): void {
+    // 0. Remember the service URL from every inbound activity (messages, installs, channel
+    // updates, reactions), so outbound posts reach the right region even before anyone speaks.
+    this.onTurn(async (context: TurnContext, next) => {
+      this.rememberServiceUrl(context.activity);
+      await next();
+    });
+
     // 1. Process all incoming channel messages (captured via Resource-Specific Consent)
     this.onMessage(async (context: TurnContext, next) => {
       const activity = context.activity;
-
-      // Cache serviceUrl for outbound push messages to this conversation
-      if (activity.serviceUrl && activity.conversation?.id) {
-        this.serviceUrlMap.set(activity.conversation.id, activity.serviceUrl);
-        const channelId = activity.channelData?.channel?.id;
-        if (channelId) {
-          this.serviceUrlMap.set(channelId, activity.serviceUrl);
-        }
-      }
 
       // Check if message is from the bot itself (Teams may send with or without '28:' prefix)
       const bareAppId = this.botAppId.replace(/^28:/, '');
@@ -149,6 +149,55 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
   }
 
   /**
+   * Record the Bot Framework service URL for the conversation, channel, and team of an activity.
+   */
+  rememberServiceUrl(activity: Partial<Activity>): void {
+    const serviceUrl = activity.serviceUrl;
+    if (!serviceUrl) return;
+
+    const teamId: string | undefined = activity.channelData?.team?.id;
+    const tenantId: string | undefined = activity.channelData?.tenant?.id || activity.conversation?.tenantId;
+    const ids = new Set<string>();
+    // Threaded conversation ids look like `<channelId>;messageid=<rootId>`
+    if (activity.conversation?.id) ids.add(activity.conversation.id.split(';')[0]);
+    if (activity.channelData?.channel?.id) ids.add(activity.channelData.channel.id);
+
+    for (const id of ids) {
+      if (this.serviceUrlMap.get(id) === serviceUrl) continue;
+      this.serviceUrlMap.set(id, serviceUrl);
+      try {
+        this.bridge.db.saveTeamsServiceUrl(id, serviceUrl, teamId, tenantId);
+      } catch (err) {
+        this.bridge.emit('error', err);
+      }
+    }
+  }
+
+  /**
+   * Resolve the service URL to use when posting proactively to a Teams channel.
+   */
+  resolveServiceUrl(channelId: string, teamId?: string): string {
+    const cached = this.serviceUrlMap.get(channelId);
+    if (cached) return cached;
+
+    const stored = this.bridge.db.findTeamsServiceUrl(channelId, teamId);
+    if (stored) {
+      this.serviceUrlMap.set(channelId, stored);
+      return stored;
+    }
+
+    const fallback = this.config.serviceUrl || 'https://smba.trafficmanager.net/amer/';
+    if (!this.warnedFallbackChannels.has(channelId)) {
+      this.warnedFallbackChannels.add(channelId);
+      console.warn(
+        `⚠️ No Teams service URL recorded for ${channelId}; using TEAMS_SERVICE_URL fallback ${fallback}. ` +
+          'Posts will use the stored URL once any activity arrives from this team.'
+      );
+    }
+    return fallback;
+  }
+
+  /**
    * Send a message to a Teams channel originating from Slack.
    */
   async sendMessage(
@@ -171,11 +220,7 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
       activity.replyToId = parentMessageId;
     }
 
-    // Determine target service URL (cached or default Americas/Global)
-    const serviceUrl =
-      this.serviceUrlMap.get(targetChannelId) ||
-      this.config.serviceUrl ||
-      'https://smba.trafficmanager.net/amer/';
+    const serviceUrl = this.resolveServiceUrl(targetChannelId, mapping.teams.teamId);
 
     // Construct conversation reference for proactive channel posting
     const conversationReference = {
