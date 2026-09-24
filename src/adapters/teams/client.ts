@@ -259,7 +259,8 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
       activity.replyToId = parentMessageId;
     }
 
-    const conversationReference = this.conversationReference(targetChannelId, mapping);
+    // Proactive posts ignore replyToId in channels; the thread is addressed via the conversation id
+    const conversationReference = this.conversationReference(targetChannelId, mapping, parentMessageId);
 
     let sentMessageId = '';
 
