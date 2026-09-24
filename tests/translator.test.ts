@@ -106,4 +106,32 @@ describe('MessageTranslator', () => {
       expect(MessageTranslator.slackReactionToTeams('unknown_emoji')).toBeUndefined();
     });
   });
+
+  describe('Reaction rendering', () => {
+    it('renders Slack emoji names as glyphs, falling back to :name:', () => {
+      expect(MessageTranslator.slackEmojiToGlyph('+1')).toBe('👍');
+      expect(MessageTranslator.slackEmojiToGlyph(':tada:')).toBe('🎉');
+      expect(MessageTranslator.slackEmojiToGlyph('wave::skin-tone-3')).toBe('👋');
+      expect(MessageTranslator.slackEmojiToGlyph('partyparrot')).toBe(':partyparrot:');
+    });
+
+    it('formats footers and notices', () => {
+      const groups = [
+        { emoji: '+1', users: ['Jane', 'Omar', 'Li', 'Sam'] },
+        { emoji: 'tada', users: ['Priya'] },
+      ];
+      expect(MessageTranslator.formatReactionFooter(groups)).toBe('👍 4 · 🎉 1 — reactions from Slack');
+      expect(MessageTranslator.formatReactionFooter([])).toBe('');
+      expect(MessageTranslator.formatReactionNotice(groups)).toBe('_Reactions from Slack:_ 👍 Jane, Omar, Li +1 · 🎉 Priya');
+    });
+
+    it('adds a subtle footer block to adaptive cards', () => {
+      const card = MessageTranslator.formatForTeamsAdaptiveCard(
+        { platformId: 'U1', displayName: 'Jane', platform: 'slack' },
+        'hi',
+        '👍 1 — reactions from Slack'
+      ) as any;
+      expect(card.body[2]).toMatchObject({ type: 'TextBlock', text: '👍 1 — reactions from Slack', isSubtle: true });
+    });
+  });
 });

@@ -6,7 +6,7 @@
 import Database, { Database as DatabaseType } from 'better-sqlite3';
 import path from 'node:path';
 import fs from 'node:fs';
-import { ChannelMapping, DEFAULT_MAPPING_OPTIONS, Platform } from '../core/types.js';
+import { ChannelMapping, DEFAULT_MAPPING_OPTIONS, Platform, UserIdentity } from '../core/types.js';
 import { runMigrations } from './migrations.js';
 
 export interface MessageMappingRecord {
@@ -22,7 +22,18 @@ export interface MessageMappingRecord {
   originPlatform?: Platform;
   /** Teams message id of the thread root, when the Teams side of this pair is a reply */
   teamsRootMessageId?: string;
+  /** Original message content and sender, used to re-render mirrored copies (e.g. reaction footers) */
+  sourceContent?: string;
+  sourceSender?: UserIdentity;
+  /** Teams id of the reaction notice posted for this message, if any */
+  teamsNoticeMessageId?: string;
   createdAt?: string;
+}
+
+export interface ReactionRecord {
+  emoji: string;
+  userId: string;
+  userName?: string;
 }
 
 export class BridgeDatabase {
@@ -137,8 +148,8 @@ export class BridgeDatabase {
       INSERT INTO message_mappings (
         mapping_id, slack_channel_id, slack_message_ts,
         teams_team_id, teams_channel_id, teams_message_id, is_thread_root,
-        origin_platform, teams_root_message_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        origin_platform, teams_root_message_id, source_content, source_sender
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -150,8 +161,57 @@ export class BridgeDatabase {
       record.teamsMessageId,
       record.isThreadRoot ? 1 : 0,
       record.originPlatform || null,
-      record.teamsRootMessageId || null
+      record.teamsRootMessageId || null,
+      record.sourceContent ?? null,
+      record.sourceSender ? JSON.stringify(record.sourceSender) : null
     );
+  }
+
+  updateMessageContent(id: number, content: string): void {
+    this.db.prepare('UPDATE message_mappings SET source_content = ? WHERE id = ?').run(content, id);
+  }
+
+  setTeamsNoticeMessageId(id: number, noticeId: string | null): void {
+    this.db.prepare('UPDATE message_mappings SET teams_notice_message_id = ? WHERE id = ?').run(noticeId, id);
+  }
+
+  // --- Reaction Methods ---
+
+  /** Record a user's reaction. Returns false if it was already recorded. */
+  addReaction(messageMappingId: number, platform: Platform, emoji: string, userId: string, userName?: string): boolean {
+    const res = this.db
+      .prepare(
+        `INSERT OR IGNORE INTO reactions (message_mapping_id, platform, emoji, user_id, user_name)
+         VALUES (?, ?, ?, ?, ?)`
+      )
+      .run(messageMappingId, platform, emoji, userId, userName || null);
+    return res.changes > 0;
+  }
+
+  /** Remove a user's reaction. Returns false if it wasn't recorded. */
+  removeReaction(messageMappingId: number, platform: Platform, emoji: string, userId: string): boolean {
+    const res = this.db
+      .prepare('DELETE FROM reactions WHERE message_mapping_id = ? AND platform = ? AND emoji = ? AND user_id = ?')
+      .run(messageMappingId, platform, emoji, userId);
+    return res.changes > 0;
+  }
+
+  countReactions(messageMappingId: number, platform: Platform, emoji: string): number {
+    const row = this.db
+      .prepare('SELECT COUNT(*) AS n FROM reactions WHERE message_mapping_id = ? AND platform = ? AND emoji = ?')
+      .get(messageMappingId, platform, emoji) as { n: number };
+    return row.n;
+  }
+
+  /** Reactions made on `platform` to a message pair, oldest first. */
+  listReactions(messageMappingId: number, platform: Platform): ReactionRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT emoji, user_id, user_name FROM reactions
+         WHERE message_mapping_id = ? AND platform = ? ORDER BY created_at, rowid`
+      )
+      .all(messageMappingId, platform) as { emoji: string; user_id: string; user_name: string | null }[];
+    return rows.map((r) => ({ emoji: r.emoji, userId: r.user_id, userName: r.user_name || undefined }));
   }
 
   deleteMessageMapping(id: number): void {
@@ -190,6 +250,9 @@ export class BridgeDatabase {
       isThreadRoot: Boolean(r.is_thread_root),
       originPlatform: (r.origin_platform as Platform) || undefined,
       teamsRootMessageId: (r.teams_root_message_id as string) || undefined,
+      sourceContent: (r.source_content as string | null) ?? undefined,
+      sourceSender: r.source_sender ? (JSON.parse(r.source_sender as string) as UserIdentity) : undefined,
+      teamsNoticeMessageId: (r.teams_notice_message_id as string) || undefined,
       createdAt: r.created_at as string,
     };
   }

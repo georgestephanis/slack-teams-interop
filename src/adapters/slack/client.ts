@@ -138,23 +138,27 @@ export class SlackAdapter implements BridgeAdapter {
       await this.bridge.handleIncomingMessage(normalized);
     });
 
-    // 2. Listen for emoji reactions
-    this.app.event('reaction_added', async ({ event }) => {
-      if (event.item.type !== 'message') return;
+    // 2. Listen for emoji reactions being added and removed
+    const onReaction = (action: 'add' | 'remove') =>
+      async ({ event }: { event: { user: string; reaction: string; item: { type: string; channel?: string; ts?: string } } }) => {
+        if (event.item.type !== 'message' || !event.item.channel || !event.item.ts) return;
 
-      const sender = await this.resolveUserInfo(event.user);
-      const normalizedReaction: NormalizedReaction = {
-        id: `slack-reaction-${event.item.channel}-${event.item.ts}-${event.reaction}`,
-        sourcePlatform: 'slack',
-        sourceChannelId: event.item.channel,
-        sourceMessageId: event.item.ts,
-        sender,
-        emoji: event.reaction,
-        action: 'add',
+        const sender = await this.resolveUserInfo(event.user);
+        const normalizedReaction: NormalizedReaction = {
+          id: `slack-reaction-${event.item.channel}-${event.item.ts}-${event.reaction}`,
+          sourcePlatform: 'slack',
+          sourceChannelId: event.item.channel,
+          sourceMessageId: event.item.ts,
+          sender,
+          emoji: event.reaction,
+          action,
+        };
+
+        await this.bridge.handleIncomingReaction(normalizedReaction);
       };
 
-      await this.bridge.handleIncomingReaction(normalizedReaction);
-    });
+    this.app.event('reaction_added', onReaction('add'));
+    this.app.event('reaction_removed', onReaction('remove'));
   }
 
   private async handleMessageChanged(event: SlackMessageChangedEvent): Promise<void> {
@@ -264,6 +268,22 @@ export class SlackAdapter implements BridgeAdapter {
       await this.client.chat.delete({ channel: targetChannelId, ts: targetMessageId });
     } catch (err: unknown) {
       if (slackErrorCode(err) === 'message_not_found') return;
+      throw err;
+    }
+  }
+
+  /**
+   * Remove a mirrored reaction from a Slack message.
+   */
+  async removeReaction(targetChannelId: string, targetMessageId: string, reaction: NormalizedReaction): Promise<void> {
+    const name =
+      reaction.sourcePlatform === 'teams' ? MessageTranslator.teamsReactionToSlack(reaction.emoji) : reaction.emoji;
+    if (!name) return;
+
+    try {
+      await this.client.reactions.remove({ channel: targetChannelId, timestamp: targetMessageId, name });
+    } catch (err: unknown) {
+      if (slackErrorCode(err) === 'no_reaction') return;
       throw err;
     }
   }

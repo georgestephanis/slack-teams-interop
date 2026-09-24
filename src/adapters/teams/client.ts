@@ -160,30 +160,37 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
       await next();
     });
 
-    // 3. Reactions
-    this.onReactionsAdded(async (context: TurnContext, next) => {
+    // 3. Reactions (added and removed)
+    const forwardReactions = async (context: TurnContext, action: 'add' | 'remove') => {
       const activity = context.activity;
-      const teamsChannelId = activity.channelData?.channel?.id || activity.conversation?.id;
+      const reactions = action === 'add' ? activity.reactionsAdded : activity.reactionsRemoved;
+      const messageId = activity.replyToId || activity.id || '';
+      const teamsChannelId = this.channelIdOf(activity);
 
-      if (activity.reactionsAdded) {
-        for (const r of activity.reactionsAdded) {
-          const reaction: NormalizedReaction = {
-            id: `teams-reaction-${activity.replyToId || activity.id}-${r.type}`,
-            sourcePlatform: 'teams',
-            sourceChannelId: teamsChannelId,
-            sourceMessageId: activity.replyToId || activity.id || '',
-            sender: {
-              platformId: activity.from?.id || 'unknown',
-              displayName: activity.from?.name || 'Teams User',
-              platform: 'teams',
-            },
-            emoji: r.type,
-            action: 'add',
-          };
-          await this.bridge.handleIncomingReaction(reaction);
-        }
+      for (const r of reactions || []) {
+        await this.bridge.handleIncomingReaction({
+          id: `teams-reaction-${messageId}-${r.type}`,
+          sourcePlatform: 'teams',
+          sourceChannelId: teamsChannelId,
+          sourceMessageId: messageId,
+          sender: {
+            platformId: activity.from?.id || 'unknown',
+            displayName: activity.from?.name || 'Teams User',
+            platform: 'teams',
+          },
+          emoji: r.type,
+          action,
+        });
       }
+    };
 
+    this.onReactionsAdded(async (context: TurnContext, next) => {
+      await forwardReactions(context, 'add');
+      await next();
+    });
+
+    this.onReactionsRemoved(async (context: TurnContext, next) => {
+      await forwardReactions(context, 'remove');
       await next();
     });
   }
@@ -278,9 +285,10 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
     targetMessageId: string,
     message: NormalizedMessage,
     mapping: ChannelMapping,
-    threadRootId?: string
+    threadRootId?: string,
+    options?: { footer?: string }
   ): Promise<void> {
-    const activity = this.buildActivity(message, mapping);
+    const activity = this.buildActivity(message, mapping, options?.footer);
     activity.id = targetMessageId;
 
     await this.adapter.continueConversationAsync(
@@ -313,12 +321,55 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
   /**
    * Build the outbound Teams activity for a relayed Slack message, per the mapping's display style.
    */
-  private buildActivity(message: NormalizedMessage, mapping: ChannelMapping): Partial<Activity> {
+  private buildActivity(message: NormalizedMessage, mapping: ChannelMapping, footer?: string): Partial<Activity> {
     if (mapping.options.teamsFormatStyle === 'adaptive_card') {
-      const cardPayload = MessageTranslator.formatForTeamsAdaptiveCard(message.sender, message.content);
+      const cardPayload = MessageTranslator.formatForTeamsAdaptiveCard(message.sender, message.content, footer);
       return MessageFactory.attachment(CardFactory.adaptiveCard(cardPayload));
     }
-    return MessageFactory.text(MessageTranslator.formatForTeamsMarkdown(message.sender, message.content));
+    return MessageFactory.text(MessageTranslator.formatForTeamsMarkdown(message.sender, message.content, footer));
+  }
+
+  /**
+   * Post a plain bridge notice as a reply in a thread (used for Slack reactions on Teams-authored messages).
+   */
+  async postNotice(
+    targetChannelId: string,
+    text: string,
+    mapping: ChannelMapping,
+    threadRootId: string
+  ): Promise<{ messageId: string }> {
+    let messageId = '';
+    await this.adapter.continueConversationAsync(
+      this.botAppId,
+      this.conversationReference(targetChannelId, mapping, threadRootId),
+      async (turnContext) => {
+        const response = await turnContext.sendActivity(MessageFactory.text(text));
+        messageId = response?.id || '';
+      }
+    );
+    if (!messageId) throw new Error('Teams did not return an id for the posted notice');
+    return { messageId };
+  }
+
+  /**
+   * Replace the text of a notice posted with postNotice.
+   */
+  async updateNotice(
+    targetChannelId: string,
+    noticeId: string,
+    text: string,
+    mapping: ChannelMapping,
+    threadRootId: string
+  ): Promise<void> {
+    const activity = MessageFactory.text(text);
+    activity.id = noticeId;
+    await this.adapter.continueConversationAsync(
+      this.botAppId,
+      this.conversationReference(targetChannelId, mapping, threadRootId),
+      async (turnContext) => {
+        await turnContext.updateActivity(activity);
+      }
+    );
   }
 
   /**

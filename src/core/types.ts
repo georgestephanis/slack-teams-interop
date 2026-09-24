@@ -95,6 +95,11 @@ export interface ChannelMapping {
     syncDeletes: boolean;
     syncFiles: boolean;
     teamsFormatStyle: 'adaptive_card' | 'clean_markdown';
+    /**
+     * Post Slack reactions to Teams-authored messages as a thread reply (Teams bots can't react).
+     * Reactions to bridge-posted Teams messages are always shown as an in-place footer.
+     */
+    reactionNotices: boolean;
   };
   createdAt: string;
   updatedAt: string;
@@ -110,4 +115,5 @@ export const DEFAULT_MAPPING_OPTIONS: ChannelMapping['options'] = {
   syncDeletes: false,
   syncFiles: false,
   teamsFormatStyle: 'adaptive_card',
+  reactionNotices: false,
 };

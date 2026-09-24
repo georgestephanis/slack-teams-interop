@@ -85,6 +85,28 @@ export const migrations: Migration[] = [
       ALTER TABLE message_mappings ADD COLUMN teams_root_message_id TEXT;
     `);
   },
+
+  // 4: Reaction mirroring. Per-user reactions (for refcounting and "who reacted"), the source
+  // content needed to re-render bridge-posted Teams messages with a reaction footer, and the
+  // id of the single reaction notice posted for Teams-authored messages.
+  (db) => {
+    db.exec(`
+      ALTER TABLE message_mappings ADD COLUMN source_content TEXT;
+      ALTER TABLE message_mappings ADD COLUMN source_sender TEXT;
+      ALTER TABLE message_mappings ADD COLUMN teams_notice_message_id TEXT;
+
+      CREATE TABLE reactions (
+        message_mapping_id INTEGER NOT NULL,
+        platform TEXT NOT NULL,
+        emoji TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        user_name TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (message_mapping_id, platform, emoji, user_id),
+        FOREIGN KEY (message_mapping_id) REFERENCES message_mappings (id) ON DELETE CASCADE
+      );
+    `);
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = migrations.length;

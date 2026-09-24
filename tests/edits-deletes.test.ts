@@ -80,7 +80,7 @@ describe('Edit and delete sync', () => {
     await bridge.handleIncomingMessage(slackMsg('100.1', 'helo'));
     await bridge.handleIncomingEdit(slackMsg('100.1', 'hello'));
 
-    expect(teams.updateMessage).toHaveBeenCalledWith(TEAMS_CH, 'teams-1', expect.objectContaining({ content: 'hello' }), expect.anything(), undefined);
+    expect(teams.updateMessage).toHaveBeenCalledWith(TEAMS_CH, 'teams-1', expect.objectContaining({ content: 'hello' }), expect.anything(), undefined, undefined);
   });
 
   it('passes the Teams thread root when editing a mirrored thread reply', async () => {
@@ -88,14 +88,14 @@ describe('Edit and delete sync', () => {
     await bridge.handleIncomingMessage(slackMsg('100.2', 'reply', { sourceParentId: '100.1' }));
     await bridge.handleIncomingEdit(slackMsg('100.2', 'reply (edited)', { sourceParentId: '100.1' }));
 
-    expect(teams.updateMessage).toHaveBeenCalledWith(TEAMS_CH, 'teams-2', expect.anything(), expect.anything(), 'teams-1');
+    expect(teams.updateMessage).toHaveBeenCalledWith(TEAMS_CH, 'teams-2', expect.anything(), expect.anything(), 'teams-1', undefined);
   });
 
   it('updates the Slack copy when a Teams message is edited', async () => {
     await bridge.handleIncomingMessage(teamsMsg('tm-1', 'hi'));
     await bridge.handleIncomingEdit(teamsMsg('tm-1', 'hi there'));
 
-    expect(slack.updateMessage).toHaveBeenCalledWith(SLACK_CH, '1711.001', expect.objectContaining({ content: 'hi there' }), expect.anything(), undefined);
+    expect(slack.updateMessage).toHaveBeenCalledWith(SLACK_CH, '1711.001', expect.objectContaining({ content: 'hi there' }), expect.anything(), undefined, undefined);
   });
 
   it('ignores edit events produced by the bridge updating its own copy', async () => {

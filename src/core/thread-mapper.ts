@@ -4,7 +4,7 @@
  */
 
 import { BridgeDatabase, MessageMappingRecord } from '../db/index.js';
-import { Platform } from './types.js';
+import { Platform, UserIdentity } from './types.js';
 
 export class ThreadMapper {
   constructor(private db: BridgeDatabase) {}
@@ -42,6 +42,8 @@ export class ThreadMapper {
     isThreadRoot?: boolean;
     originPlatform?: Platform;
     teamsRootMessageId?: string;
+    sourceContent?: string;
+    sourceSender?: UserIdentity;
   }): void {
     this.db.saveMessageMapping({
       mappingId: params.mappingId,
@@ -53,6 +55,8 @@ export class ThreadMapper {
       isThreadRoot: params.isThreadRoot ?? false,
       originPlatform: params.originPlatform,
       teamsRootMessageId: params.teamsRootMessageId,
+      sourceContent: params.sourceContent,
+      sourceSender: params.sourceSender,
     });
   }
 
