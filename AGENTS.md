@@ -75,11 +75,11 @@ Routing is hardcoded as a Slack⇄Teams pair in `bridge.ts`. A third platform ne
 - **No schema migrations.** Tables are created with `IF NOT EXISTS`, so altering a column in `initTables()` will **not** affect existing deployments. Any schema change needs an explicit migration step (e.g. `PRAGMA user_version`).
 - **Teams `serviceUrl` is cached in memory only.** After a restart, outbound posts to a channel use `TEAMS_SERVICE_URL` until that channel sends an inbound activity. Keep this in mind when debugging region-specific (EMEA/APAC) failures.
 - **Teams addresses the bot as `28:<appId>`**, not just the bare app ID. Account for both forms when comparing sender IDs or registering bot IDs.
-- **`/api/messages` is authenticated by the Bot Framework adapter** (it validates Azure-issued JWTs). It must stay reachable without admin credentials. All other management endpoints (`/api/mappings`, etc.) and the dashboard require admin auth. When modifying routing, ensure `/api/messages` and liveness probes stay exempt from basic auth.
+- **`/api/messages` is authenticated by the Bot Framework adapter** (it validates Azure-issued JWTs). It must stay reachable without admin credentials, as must `/slack/events` (verified by Slack's signing secret). All other management endpoints (`/api/mappings`, etc.) and the dashboard require admin auth. When modifying routing, ensure `/api/messages` and liveness probes stay exempt from basic auth.
 - **Dashboard HTML is built with template strings.** Pass every server-supplied value through `escapeHtml()` in `public/app.js`, including values in attributes.
 - **Tests write real SQLite files** under `./data/` and delete them in `afterEach`. Use a unique filename per spec file so parallel runs don't collide.
 - **`public/teams-app.zip` is committed and served** by `/api/manifests/teams`. Run `npm run package:teams` after editing `manifests/teams/`. The manifest's `botId` is a placeholder the operator must replace.
-- **Slack HTTP (Events API) mode is not fully wired.** Bolt's default receiver listens on its own port instead of the shared Express server. Socket Mode is the supported path.
+- **Slack HTTP (Events API) mode** mounts Bolt's `ExpressReceiver` router (`SlackAdapter.httpRouter`) on the shared server at `/slack/events`, **before** `express.json()` (signature verification needs the raw body) and before admin auth. In that mode `app.start()` is skipped, because it would open Bolt's own listener on port 3000.
 
 ## Conventions
 

@@ -4,7 +4,8 @@
  * Supports both Socket Mode (WebSocket) and HTTP webhook receiver.
  */
 
-import { App, LogLevel } from '@slack/bolt';
+import { App, ExpressReceiver, LogLevel } from '@slack/bolt';
+import type { IRouter } from 'express';
 import { WebClient } from '@slack/web-api';
 import { BridgeAdapter, BridgeCore } from '../../core/bridge.js';
 import { MessageTranslator } from '../../core/translator.js';
@@ -15,6 +16,9 @@ import {
   Platform,
   UserIdentity,
 } from '../../core/types.js';
+
+/** Path the Slack Events API posts to in HTTP mode (mounted on the shared web server). */
+export const SLACK_EVENTS_PATH = '/slack/events';
 
 export interface SlackAdapterConfig {
   botToken: string;
@@ -30,6 +34,11 @@ export class SlackAdapter implements BridgeAdapter {
   /** True once auth succeeded and the receiver started */
   public connected = false;
   public readonly socketMode: boolean;
+  /**
+   * HTTP mode only: Express router serving SLACK_EVENTS_PATH. Mount it on the shared server
+   * before any JSON body parser (signature verification needs the raw body) and before admin auth.
+   */
+  public readonly httpRouter?: IRouter;
   private botUserId?: string;
 
   constructor(
@@ -45,13 +54,27 @@ export class SlackAdapter implements BridgeAdapter {
       );
     }
 
-    this.app = new App({
-      token: config.botToken,
-      appToken: isSocketMode ? config.appToken : undefined,
-      signingSecret: config.signingSecret,
-      socketMode: isSocketMode,
-      logLevel: LogLevel.WARN,
-    });
+    if (isSocketMode) {
+      this.app = new App({
+        token: config.botToken,
+        appToken: config.appToken,
+        socketMode: true,
+        logLevel: LogLevel.WARN,
+      });
+    } else {
+      // Serve events from the shared Express server rather than Bolt's own listener (port 3000)
+      const receiver = new ExpressReceiver({
+        signingSecret: config.signingSecret!,
+        endpoints: SLACK_EVENTS_PATH,
+        logLevel: LogLevel.WARN,
+      });
+      this.httpRouter = receiver.router;
+      this.app = new App({
+        token: config.botToken,
+        receiver,
+        logLevel: LogLevel.WARN,
+      });
+    }
 
     this.client = this.app.client;
     this.setupEventListeners();
@@ -64,7 +87,10 @@ export class SlackAdapter implements BridgeAdapter {
       this.bridge.dedup.registerBotId('slack', this.botUserId);
     }
 
-    await this.app.start();
+    // In HTTP mode the shared web server receives events, so there is no listener to start
+    if (this.socketMode) {
+      await this.app.start();
+    }
     this.connected = true;
   }
 

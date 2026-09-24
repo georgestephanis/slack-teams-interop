@@ -3,7 +3,7 @@
  * Boots the Bridge Core, adapters, and HTTP management server.
  */
 
-import { SlackAdapter } from './adapters/slack/client.js';
+import { SLACK_EVENTS_PATH, SlackAdapter } from './adapters/slack/client.js';
 import { TeamsAdapter } from './adapters/teams/client.js';
 import { config } from './config.js';
 import { BridgeCore } from './core/bridge.js';
@@ -91,6 +91,8 @@ async function bootstrap() {
     host: config.HOST,
     adminPassword: config.ADMIN_PASSWORD,
     bridge,
+    publicUrl: config.PUBLIC_URL,
+    slackSocketMode: config.SLACK_USE_SOCKET_MODE,
     slackAdapter,
     teamsAdapter,
   });
@@ -98,6 +100,9 @@ async function bootstrap() {
   const server = app.listen(config.PORT, config.HOST, () => {
     console.log(`🌐 InterBridge Admin UI & API listening on http://${config.HOST}:${config.PORT}`);
     console.log(`📡 Teams Bot Framework Webhook available at http://${config.HOST}:${config.PORT}/api/messages`);
+    if (slackAdapter?.httpRouter) {
+      console.log(`📡 Slack Events API endpoint available at http://${config.HOST}:${config.PORT}${SLACK_EVENTS_PATH}`);
+    }
   });
 
   // Graceful shutdown
