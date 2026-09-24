@@ -31,7 +31,7 @@ This guide walks you through setting up your self-hosted Slack <-> Microsoft Tea
 Use this if your organization doesn't allow Socket Mode apps, or you'd rather receive Slack events over HTTPS alongside the Teams webhook.
 
 1. In `.env`, set `SLACK_USE_SOCKET_MODE=false`, set `SLACK_SIGNING_SECRET` (**Basic Information** -> **App Credentials**), and set `PUBLIC_URL` to the bridge's public HTTPS base URL. `SLACK_APP_TOKEN` isn't needed.
-2. Create the app from the manifest generated at `GET /api/manifests/slack?mode=http`. This sets `socket_mode_enabled: false` and a Request URL of `<PUBLIC_URL>/slack/events`. Alternatively, edit an existing app's **Event Subscriptions** to use that URL.
+2. Create the app from the manifest generated at `GET /api/manifests/slack?mode=http`. Like the rest of the admin API, it requires the dashboard login (any username, password `ADMIN_PASSWORD`), for example `curl -u admin:$ADMIN_PASSWORD https://<PUBLIC_URL>/api/manifests/slack?mode=http`. This sets `socket_mode_enabled: false` and a Request URL of `<PUBLIC_URL>/slack/events`. Alternatively, edit an existing app's **Event Subscriptions** to use that URL.
 3. Make sure your reverse proxy forwards `/slack/events` to the bridge (same port as `/api/messages`). Like the Teams webhook, it's authenticated by the platform (Slack's request signature), not the admin password. Slack's URL verification challenge is answered automatically once the bridge is running.
 
 ---
