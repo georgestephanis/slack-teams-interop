@@ -90,3 +90,15 @@ export interface ChannelMapping {
   createdAt: string;
   updatedAt: string;
 }
+
+/**
+ * Defaults applied to mapping options on read. Add new option keys here with their default value.
+ */
+export const DEFAULT_MAPPING_OPTIONS: ChannelMapping['options'] = {
+  syncThreads: true,
+  syncReactions: true,
+  syncEdits: false,
+  syncDeletes: false,
+  syncFiles: false,
+  teamsFormatStyle: 'adaptive_card',
+};

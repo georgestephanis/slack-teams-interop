@@ -42,7 +42,8 @@ With no `SLACK_BOT_TOKEN` or `TEAMS_APP_ID` set, the service boots in API-only m
 | `src/core/translator.ts` | Slack mrkdwn ⇄ Teams Markdown/HTML, plus Teams message formatting (plain header or Adaptive Card). |
 | `src/core/deduplication.ts` | Loop prevention: known bot IDs plus an LRU echo cache. |
 | `src/core/thread-mapper.ts` | Thin wrapper over DB lookups that map Slack `ts` ⇄ Teams message IDs. |
-| `src/db/index.ts` | `better-sqlite3` wrapper. Schema is created with `CREATE TABLE IF NOT EXISTS` in `initTables()`. |
+| `src/db/index.ts` | `better-sqlite3` wrapper; runs migrations on open. |
+| `src/db/migrations.ts` | Ordered schema migrations (`PRAGMA user_version`). |
 | `src/adapters/slack/client.ts` | Slack events → `NormalizedMessage`/`NormalizedReaction`; posts with `chat:write.customize` so the sender's name and avatar show. |
 | `src/adapters/teams/client.ts` | `TeamsActivityHandler` subclass; posts proactively via `continueConversationAsync`. |
 | `src/adapters/matrix/types.ts` | Matrix event converters only. **Not wired into the running service.** |
@@ -72,7 +73,7 @@ Routing is hardcoded as a Slack⇄Teams pair in `bridge.ts`. A third platform ne
 - **ESM with `NodeNext` resolution.** Relative imports in `.ts` files must use the `.js` extension (`import { x } from './types.js'`).
 - **Toolchain versions are new.** TypeScript 7, Vitest 5, Express 5, and Zod 4. Check current APIs rather than relying on older patterns (for example, Express 5 path syntax and Zod 4 `.default()` semantics).
 - **`options.syncEdits`, `syncDeletes`, and `syncFiles` are declared but not implemented.** The Slack adapter drops `message_changed` and `message_deleted`, and nothing transfers files. Don't assume these features work. If you implement one, update the README feature list to match.
-- **No schema migrations.** Tables are created with `IF NOT EXISTS`, so altering a column in `initTables()` will **not** affect existing deployments. Any schema change needs an explicit migration step (e.g. `PRAGMA user_version`).
+- **Schema changes go through migrations.** `src/db/migrations.ts` is an append-only list tracked with `PRAGMA user_version`. Add a new migration; never edit or reorder a shipped one. The DB refuses to open if its version is newer than the code, and it writes `<db>.bak-v<N>` before upgrading an existing database. New `ChannelMapping.options` keys also need a default in `DEFAULT_MAPPING_OPTIONS` (`src/core/types.ts`), because stored mappings won't have them.
 - **Teams `serviceUrl` is cached in memory only.** After a restart, outbound posts to a channel use `TEAMS_SERVICE_URL` until that channel sends an inbound activity. Keep this in mind when debugging region-specific (EMEA/APAC) failures.
 - **Teams addresses the bot as `28:<appId>`**, not just the bare app ID. Account for both forms when comparing sender IDs or registering bot IDs.
 - **`/api/messages` is authenticated by the Bot Framework adapter** (it validates Azure-issued JWTs). It must stay reachable without admin credentials. All other management endpoints (`/api/mappings`, etc.) and the dashboard require admin auth. When modifying routing, ensure `/api/messages` and liveness probes stay exempt from basic auth.

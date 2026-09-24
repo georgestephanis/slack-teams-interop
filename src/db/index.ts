@@ -6,7 +6,8 @@
 import Database, { Database as DatabaseType } from 'better-sqlite3';
 import path from 'node:path';
 import fs from 'node:fs';
-import { ChannelMapping } from '../core/types.js';
+import { ChannelMapping, DEFAULT_MAPPING_OPTIONS } from '../core/types.js';
+import { runMigrations } from './migrations.js';
 
 export interface MessageMappingRecord {
   id?: number;
@@ -33,61 +34,7 @@ export class BridgeDatabase {
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
 
-    this.initTables();
-  }
-
-  private initTables(): void {
-    // 1. Channel Mappings
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS channel_mappings (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        enabled INTEGER NOT NULL DEFAULT 1,
-        slack_channel_id TEXT NOT NULL,
-        slack_channel_name TEXT,
-        teams_team_id TEXT NOT NULL,
-        teams_channel_id TEXT NOT NULL,
-        teams_team_name TEXT,
-        teams_channel_name TEXT,
-        options TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-      CREATE INDEX IF NOT EXISTS idx_cm_slack ON channel_mappings (slack_channel_id);
-      CREATE INDEX IF NOT EXISTS idx_cm_teams ON channel_mappings (teams_channel_id);
-    `);
-
-    // 2. Message Mappings (for threading and reaction syncing)
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS message_mappings (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        mapping_id TEXT NOT NULL,
-        slack_channel_id TEXT NOT NULL,
-        slack_message_ts TEXT NOT NULL,
-        teams_team_id TEXT NOT NULL,
-        teams_channel_id TEXT NOT NULL,
-        teams_message_id TEXT NOT NULL,
-        is_thread_root INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        FOREIGN KEY (mapping_id) REFERENCES channel_mappings (id) ON DELETE CASCADE
-      );
-      CREATE INDEX IF NOT EXISTS idx_mm_slack ON message_mappings (slack_channel_id, slack_message_ts);
-      CREATE INDEX IF NOT EXISTS idx_mm_teams ON message_mappings (teams_channel_id, teams_message_id);
-      CREATE INDEX IF NOT EXISTS idx_mm_created ON message_mappings (created_at);
-    `);
-
-    // 3. User Identity Cache
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS user_cache (
-        platform TEXT NOT NULL,
-        platform_id TEXT NOT NULL,
-        display_name TEXT NOT NULL,
-        avatar_url TEXT,
-        email TEXT,
-        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-        PRIMARY KEY (platform, platform_id)
-      );
-    `);
+    runMigrations(this.db, { dbPath });
   }
 
   // --- Channel Mapping Methods ---
@@ -172,7 +119,8 @@ export class BridgeDatabase {
         teamName: (r.teams_team_name as string) || undefined,
         channelName: (r.teams_channel_name as string) || undefined,
       },
-      options: JSON.parse(r.options as string),
+      // Merge over defaults so option keys added after a mapping was saved get sensible values
+      options: { ...DEFAULT_MAPPING_OPTIONS, ...JSON.parse(r.options as string) },
       createdAt: r.created_at as string,
       updatedAt: r.updated_at as string,
     };
