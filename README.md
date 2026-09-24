@@ -1,6 +1,6 @@
 # InterBridge: Self-Hosted Slack <-> Microsoft Teams Channel Bridge
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: AGPL v3+](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-v22+-green.svg)](https://nodejs.org)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](Dockerfile)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7-blue.svg)](tsconfig.json)
@@ -168,4 +168,11 @@ The test suite covers dialect translation, loop prevention, threading, edits and
 
 ## License
 
-MIT
+InterBridge is free software: you can redistribute it and/or modify it under the terms of the **GNU Affero General Public License**, version 3 or (at your option) any later version. See [LICENSE](LICENSE).
+
+**What this means for you:**
+- **Using it, including commercially:** you can run InterBridge for your own organization or for clients, unchanged, with no obligations beyond keeping the license notices.
+- **Modifying and hosting it:** if you change the code and run it for other people (for example a client's Slack or Teams users, who interact with it over the network), the AGPL requires you to offer them the source of your modified version under the same license. The dashboard footer links to the source; point it at your fork if you change the code.
+- **Distributing it** (for example publishing a Docker image or handing someone a copy): include the source, or a written offer of it, under the same license.
+
+This summary isn't legal advice; the [license text](LICENSE) is what applies.

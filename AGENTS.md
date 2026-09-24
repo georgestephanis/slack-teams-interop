@@ -98,6 +98,10 @@ Routing is hardcoded as a Slack⇄Teams pair in `bridge.ts`. A third platform ne
 - New translator behavior gets a case in `tests/translator.test.ts`. New routing behavior gets a case in `tests/bridge.test.ts`, using the mock adapters there.
 - Branch from `trunk` (the default branch) and keep one logical change per PR.
 
+## License
+
+The project is **AGPL-3.0-or-later** (`LICENSE`, `package.json`). New dependencies must be compatible with GPLv3: permissive licenses (MIT, BSD, ISC, Apache-2.0, and so on) are fine; GPLv2-only, SSPL and proprietary licenses aren't. Check before adding one. Keep the dashboard footer's source link.
+
 ## Safety
 
 - Don't send test messages to real Slack workspaces or Teams tenants, or post to a live bridge, without explicit approval from the human. Use the mock adapters in `tests/bridge.test.ts` instead.
