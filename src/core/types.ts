@@ -17,6 +17,8 @@ export interface UserIdentity {
   email?: string;
   /** The originating platform */
   platform: Platform;
+  /** True for bots and apps (they never get sender notices) */
+  isBot?: boolean;
 }
 
 export interface Attachment {
@@ -29,6 +31,19 @@ export interface Attachment {
   /** Link a person can open to view the file on the source platform (may require access there) */
   permalink?: string;
   thumbnailUrl?: string;
+  /** Publicly loadable image URL (the bridge's signed media proxy), so the other platform can show it inline */
+  displayUrl?: string;
+  /** Downloads the file with the source platform's credentials. Transient: never stored. */
+  fetchContent?: () => Promise<Buffer>;
+  /** Id of the copy uploaded to Slack, once transferred (reused on edits and re-renders) */
+  slackFileId?: string;
+}
+
+/** Raster images the bridge will transfer or proxy (SVG excluded: it can carry script). */
+export function isImageAttachment(a: Attachment): boolean {
+  // Ignore parameters and case, e.g. `IMAGE/SVG+XML; charset=utf-8`
+  const type = a.contentType.split(';')[0].trim().toLowerCase();
+  return type.startsWith('image/') && !type.startsWith('image/svg');
 }
 
 export interface NormalizedMessage {
@@ -50,6 +65,8 @@ export interface NormalizedMessage {
   sourceParentId?: string;
   /** Attached files or images */
   attachments?: Attachment[];
+  /** Descriptions of content the bridge can't relay (e.g. "an Adaptive Card"), for sender notices */
+  unsupported?: string[];
   /** Message creation timestamp */
   timestamp: Date;
   /** Raw platform payload for specialized adapter processing if needed */
@@ -103,6 +120,8 @@ export interface ChannelMapping {
      * Reactions to bridge-posted Teams messages are always shown as an in-place footer.
      */
     reactionNotices: boolean;
+    /** Tell senders (privately in Slack, as a thread reply in Teams) when part of a message couldn't be relayed */
+    unsupportedNotices: boolean;
   };
   createdAt: string;
   updatedAt: string;
@@ -119,4 +138,5 @@ export const DEFAULT_MAPPING_OPTIONS: ChannelMapping['options'] = {
   syncFiles: false,
   teamsFormatStyle: 'adaptive_card',
   reactionNotices: false,
+  unsupportedNotices: true,
 };

@@ -4,18 +4,34 @@
  */
 
 import { EventEmitter } from 'node:events';
+import { LRUCache } from 'lru-cache';
 import { BridgeDatabase } from '../db/index.js';
 import { DeduplicationManager } from './deduplication.js';
 import { ThreadMapper } from './thread-mapper.js';
 import { MessageTranslator, ReactionGroup } from './translator.js';
 import { MessageMappingRecord } from '../db/index.js';
 import {
+  Attachment,
   ChannelMapping,
+  isImageAttachment,
   NormalizedMessage,
   NormalizedMessageRef,
   NormalizedReaction,
   Platform,
 } from './types.js';
+
+export interface SendResult {
+  messageId: string;
+  /** Attachments as actually delivered (e.g. with `slackFileId` set), to store for re-renders */
+  attachments?: Attachment[];
+  /** Attachments the adapter meant to transfer but couldn't (relayed as a named line instead) */
+  undelivered?: Attachment[];
+}
+
+/** How long before the same sender is told about the same kind of problem again */
+export const SENDER_NOTICE_COOLDOWN_MS = 12 * 60 * 60 * 1000;
+
+type NoticeReason = 'files_off' | 'files_linked' | 'files_failed' | 'unsupported';
 
 export interface BridgeAdapter {
   platform: Platform;
@@ -24,7 +40,7 @@ export interface BridgeAdapter {
     message: NormalizedMessage,
     mapping: ChannelMapping,
     parentMessageId?: string
-  ): Promise<{ messageId: string }>;
+  ): Promise<SendResult>;
   sendReaction?(
     targetChannelId: string,
     targetMessageId: string,
@@ -44,7 +60,18 @@ export interface BridgeAdapter {
     mapping: ChannelMapping,
     threadRootId?: string,
     options?: { footer?: string }
-  ): Promise<void>;
+  ): Promise<void | { attachments?: Attachment[] }>;
+  /**
+   * Tell a user something about their own message: privately where the platform allows (Slack
+   * ephemeral), otherwise as a thread reply. Returns the posted message id, if it's a real post.
+   */
+  notifySender?(
+    channelId: string,
+    userId: string,
+    text: string,
+    mapping: ChannelMapping,
+    threadRootId?: string
+  ): Promise<{ messageId?: string } | void>;
   /** Post a plain bridge notice (not attributed to a user) into a thread. */
   postNotice?(
     targetChannelId: string,
@@ -87,6 +114,8 @@ export class BridgeCore extends EventEmitter {
   private adapters: Map<Platform, BridgeAdapter> = new Map();
   /** Serializes work per message pair so concurrent reactions/edits don't race (e.g. two notices) */
   private pairLocks = new Map<number, Promise<void>>();
+  /** Sender notices recently sent, keyed by platform/user/reason, to avoid nagging */
+  private recentNotices = new LRUCache<string, true>({ max: 10_000, ttl: SENDER_NOTICE_COOLDOWN_MS });
 
   constructor(dbPath?: string) {
     super();
@@ -135,9 +164,14 @@ export class BridgeCore extends EventEmitter {
         return;
       }
 
-      // Files are relayed as named links (when syncFiles is on); drop messages left with nothing to say
-      msg = this.withAttachmentLines(msg, mapping);
-      if (!msg.content.trim()) {
+      // Files: images are transferred where possible, the rest become named links (when syncFiles
+      // is on). Drop messages left with nothing to say.
+      const original = msg;
+      const prepared = this.prepareAttachments(msg, mapping, targetPlatform);
+      msg = prepared.msg;
+      const issues = this.senderIssues(original, prepared.linked, mapping, targetPlatform);
+      if (!msg.content.trim() && !msg.attachments?.length) {
+        await this.notifySender(original, mapping, issues, true);
         return;
       }
 
@@ -182,6 +216,7 @@ export class BridgeCore extends EventEmitter {
           teamsRootMessageId: targetParentId,
           sourceContent: msg.content,
           sourceSender: msg.sender,
+          sourceAttachments: result.attachments ?? msg.attachments,
         });
       } else {
         this.threadMapper.recordMessagePair({
@@ -196,8 +231,14 @@ export class BridgeCore extends EventEmitter {
           teamsRootMessageId: msg.sourceParentId,
           sourceContent: msg.content,
           sourceSender: msg.sender,
+          sourceAttachments: result.attachments ?? msg.attachments,
         });
       }
+
+      if (result.undelivered?.length) {
+        issues.push(['files_failed', this.describeUndelivered(result.undelivered, targetPlatform)]);
+      }
+      await this.notifySender(original, mapping, issues, false);
 
       this.emit('message:relayed', {
         sourcePlatform: msg.sourcePlatform,
@@ -311,13 +352,109 @@ export class BridgeCore extends EventEmitter {
     }
   }
 
-  /** Fold a message's attachments into its content as `📎` link lines, if the mapping syncs files. */
-  private withAttachmentLines(msg: NormalizedMessage, mapping: ChannelMapping): NormalizedMessage {
-    if (!mapping.options.syncFiles || !msg.attachments?.length) return msg;
+  /**
+   * Decide how a message's attachments reach the target platform (only when the mapping syncs files):
+   * images the target can show inline stay in `attachments` for the adapter to transfer; everything
+   * else is folded into the content as `📎` link lines. Metadata from an earlier relay of the same
+   * message (`previous`) is reused, so edits don't re-upload images.
+   */
+  private prepareAttachments(
+    msg: NormalizedMessage,
+    mapping: ChannelMapping,
+    targetPlatform: Platform,
+    previous?: Attachment[]
+  ): { msg: NormalizedMessage; linked: Attachment[] } {
+    if (!mapping.options.syncFiles || !msg.attachments?.length) {
+      return { msg: { ...msg, attachments: undefined }, linked: [] };
+    }
+
+    const known = new Map((previous ?? []).map((a) => [a.id, a]));
+    const merged = msg.attachments.map((a) => ({ ...known.get(a.id), ...a, slackFileId: a.slackFileId ?? known.get(a.id)?.slackFileId }));
+
+    const canShowInline = (a: Attachment) =>
+      isImageAttachment(a) && (targetPlatform === 'slack' ? Boolean(a.fetchContent || a.slackFileId) : Boolean(a.displayUrl));
+    const inline = merged.filter(canShowInline);
+    const linked = merged.filter((a) => !canShowInline(a));
+
     return {
-      ...msg,
-      content: MessageTranslator.appendAttachmentLines(msg.content, msg.attachments, msg.sourcePlatform),
+      msg: {
+        ...msg,
+        content: MessageTranslator.appendAttachmentLines(msg.content, linked, msg.sourcePlatform),
+        attachments: inline.length ? inline : undefined,
+      },
+      linked,
     };
+  }
+
+  /**
+   * Problems worth telling the sender about, as [reason, sentence] pairs: files not sent because
+   * file sync is off, files that arrive only as links, and content the bridge can't relay at all.
+   */
+  private senderIssues(
+    original: NormalizedMessage,
+    linked: Attachment[],
+    mapping: ChannelMapping,
+    targetPlatform: Platform
+  ): [NoticeReason, string][] {
+    const target = platformName(targetPlatform);
+    const source = platformName(original.sourcePlatform);
+    const issues: [NoticeReason, string][] = [];
+
+    if (original.attachments?.length && !mapping.options.syncFiles) {
+      issues.push(['files_off', `${quoteNames(original.attachments)} ${isAre(original.attachments)} not sent, because file sharing is off for this bridge.`]);
+    }
+    if (linked.length) {
+      issues.push([
+        'files_linked',
+        `${quoteNames(linked)} ${isAre(linked, 'was', 'were')} shared as ${linked.length === 1 ? 'a link' : 'links'}, because files aren't copied to ${target}; people there may need ${source} access to open ${linked.length === 1 ? 'it' : 'them'}.`,
+      ]);
+    }
+    if (original.unsupported?.length) {
+      issues.push(['unsupported', `${capitalize(original.unsupported.join(', '))} can't be relayed to ${target}.`]);
+    }
+    return issues;
+  }
+
+  private describeUndelivered(undelivered: Attachment[], targetPlatform: Platform): string {
+    return `${quoteNames(undelivered)} couldn't be copied to ${platformName(targetPlatform)}, so only the name was shared.`;
+  }
+
+  /**
+   * Tell the sender about `issues`, skipping reasons they were told about recently. Failures are
+   * reported as errors but never block relaying.
+   */
+  private async notifySender(
+    msg: NormalizedMessage,
+    mapping: ChannelMapping,
+    issues: [NoticeReason, string][],
+    dropped: boolean
+  ): Promise<void> {
+    if (!issues.length || !mapping.options.unsupportedNotices || msg.sender.isBot) return;
+
+    const adapter = this.adapters.get(msg.sourcePlatform);
+    if (!adapter?.notifySender) return;
+
+    const fresh = issues.filter(([reason]) => !this.recentNotices.has(this.noticeKey(msg, reason)));
+    if (!fresh.length) return;
+
+    const targetName = platformName(msg.sourcePlatform === 'slack' ? 'teams' : 'slack');
+    // Slack notices are private; Teams notices are public thread replies, so they name the sender
+    const senderName = msg.sourcePlatform === 'teams' ? msg.sender.displayName : undefined;
+    const text = MessageTranslator.formatSenderNotice(fresh.map(([, sentence]) => sentence), dropped, targetName, senderName);
+    // Slack: ephemeral in the thread for replies, in the channel otherwise. Teams: reply in the message's thread.
+    const threadRootId = msg.sourcePlatform === 'teams' ? (msg.sourceParentId ?? msg.sourceMessageId) : msg.sourceParentId;
+
+    try {
+      const posted = await adapter.notifySender(msg.sourceChannelId, msg.sender.platformId, text, mapping, threadRootId);
+      if (posted && posted.messageId) this.dedup.markRelayed(msg.sourcePlatform, msg.sourceChannelId, posted.messageId);
+      for (const [reason] of fresh) this.recentNotices.set(this.noticeKey(msg, reason), true);
+    } catch (err) {
+      this.emit('error', err);
+    }
+  }
+
+  private noticeKey(msg: NormalizedMessage, reason: NoticeReason): string {
+    return `${msg.sourcePlatform}:${msg.sourceChannelId}:${msg.sender.platformId}:${reason}`;
   }
 
   /** Reactions recorded on `platform` for a pair, grouped by emoji in first-seen order. */
@@ -342,6 +479,7 @@ export class BridgeCore extends EventEmitter {
       sourceMessageId: onSlack ? pair.slackMessageTs : pair.teamsMessageId,
       sender: pair.sourceSender,
       content: pair.sourceContent,
+      attachments: pair.sourceAttachments,
       timestamp: new Date(),
     };
   }
@@ -368,8 +506,8 @@ export class BridgeCore extends EventEmitter {
 
       const target = this.findMirroredTarget(msg.sourcePlatform, msg.sourceChannelId, msg.sourceMessageId);
       if (!target || !target.mapping.options.syncEdits) return;
-      msg = this.withAttachmentLines(msg, target.mapping);
-      if (!msg.content.trim()) return;
+      msg = this.prepareAttachments(msg, target.mapping, target.targetPlatform, target.pair.sourceAttachments).msg;
+      if (!msg.content.trim() && !msg.attachments?.length) return;
 
       // Only the author's side can edit; ignore edits to the bridge's own mirror copies.
       // Rows recorded before origin tracking have no originPlatform; an edit event from a
@@ -386,7 +524,7 @@ export class BridgeCore extends EventEmitter {
             ? MessageTranslator.formatReactionFooter(this.reactionGroups(target.pair.id!, 'slack'))
             : undefined;
 
-        await adapter.updateMessage!(
+        const updated = await adapter.updateMessage!(
           target.targetChannelId,
           target.targetMessageId,
           msg,
@@ -394,7 +532,7 @@ export class BridgeCore extends EventEmitter {
           target.threadRootId,
           footer ? { footer } : undefined
         );
-        this.db.updateMessageContent(target.pair.id!, msg.content);
+        this.db.updateMessageContent(target.pair.id!, msg.content, updated?.attachments ?? msg.attachments);
       });
 
       this.emit('message:edited', {
@@ -490,4 +628,24 @@ export class BridgeCore extends EventEmitter {
 
     return null;
   }
+}
+
+function platformName(platform: Platform): string {
+  return platform === 'slack' ? 'Slack' : platform === 'teams' ? 'Teams' : 'Matrix';
+}
+
+/** `"a.pdf"`, `"a.pdf" and "b.png"`, or `"a.pdf", "b.png" and 3 more` */
+function quoteNames(attachments: Attachment[]): string {
+  const names = attachments.map((a) => `"${a.name}"`);
+  if (names.length <= 2) return names.join(' and ');
+  if (names.length === 3) return `${names[0]}, ${names[1]} and ${names[2]}`;
+  return `${names[0]}, ${names[1]} and ${names.length - 2} more`;
+}
+
+function isAre(items: unknown[], one = 'was', many = 'were'): string {
+  return items.length === 1 ? one : many;
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }

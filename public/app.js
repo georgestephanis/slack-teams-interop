@@ -37,6 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('sync-threads').checked = true;
     document.getElementById('sync-reactions').checked = true;
     document.getElementById('sync-files').checked = true;
+    document.getElementById('unsupported-notices').checked = true;
     document.getElementById('sync-edits').checked = true;
     document.getElementById('sync-deletes').checked = true;
     modalMapping.classList.remove('hidden');
@@ -75,6 +76,7 @@ document.addEventListener('DOMContentLoaded', () => {
         syncThreads: document.getElementById('sync-threads').checked,
         syncReactions: document.getElementById('sync-reactions').checked,
         reactionNotices: document.getElementById('reaction-notices').checked,
+        unsupportedNotices: document.getElementById('unsupported-notices').checked,
         syncFiles: document.getElementById('sync-files').checked,
         syncEdits: document.getElementById('sync-edits').checked,
         syncDeletes: document.getElementById('sync-deletes').checked,

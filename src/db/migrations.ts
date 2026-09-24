@@ -107,6 +107,12 @@ export const migrations: Migration[] = [
       );
     `);
   },
+
+  // 5: Attachment metadata for relayed messages (names, links, proxy URLs, uploaded Slack file ids),
+  // so edits and reaction-footer re-renders keep transferred images.
+  (db) => {
+    db.exec(`ALTER TABLE message_mappings ADD COLUMN source_attachments TEXT;`);
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = migrations.length;

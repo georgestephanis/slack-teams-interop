@@ -5,13 +5,16 @@
  */
 
 import { App, ExpressReceiver, LogLevel } from '@slack/bolt';
+import type { Block, KnownBlock } from '@slack/web-api';
 import type { IRouter } from 'express';
 import { WebClient } from '@slack/web-api';
-import { BridgeAdapter, BridgeCore } from '../../core/bridge.js';
+import { BridgeAdapter, BridgeCore, SendResult } from '../../core/bridge.js';
 import { MessageTranslator } from '../../core/translator.js';
+import { MAX_TRANSFER_BYTES, MediaSigner } from '../../core/media.js';
 import {
   Attachment,
   ChannelMapping,
+  isImageAttachment,
   NormalizedMessage,
   NormalizedReaction,
   Platform,
@@ -26,6 +29,8 @@ export interface SlackAdapterConfig {
   appToken?: string; // Required for Socket Mode
   signingSecret?: string; // Required for HTTP Webhook mode
   useSocketMode?: boolean;
+  /** Signs proxy URLs so Teams can show Slack images inline; without it images are relayed as links */
+  mediaSigner?: MediaSigner;
 }
 
 interface SlackFile {
@@ -53,17 +58,23 @@ interface SlackMessageChangedEvent {
 }
 
 /** Map Slack file objects to normalized attachments (links only; files aren't transferred). */
-function toAttachments(files?: SlackFile[]): Attachment[] | undefined {
+function toAttachments(files?: SlackFile[], signer?: MediaSigner): Attachment[] | undefined {
   if (!files?.length) return undefined;
-  return files.map((f) => ({
-    id: f.id,
-    name: f.name || f.title || 'file',
-    contentType: f.mimetype || 'application/octet-stream',
-    size: f.size,
-    downloadUrl: f.url_private,
-    permalink: f.permalink,
-    thumbnailUrl: f.thumb_360,
-  }));
+  return files.map((f) => {
+    const attachment: Attachment = {
+      id: f.id,
+      name: f.name || f.title || 'file',
+      contentType: f.mimetype || 'application/octet-stream',
+      size: f.size,
+      downloadUrl: f.url_private,
+      permalink: f.permalink,
+      thumbnailUrl: f.thumb_360,
+    };
+    if (signer && f.url_private && isImageAttachment(attachment) && (f.size ?? 0) <= MAX_TRANSFER_BYTES) {
+      attachment.displayUrl = signer.sign(f.url_private);
+    }
+    return attachment;
+  });
 }
 
 interface SlackMessageDeletedEvent {
@@ -178,7 +189,7 @@ export class SlackAdapter implements BridgeAdapter {
         files?: SlackFile[];
       };
 
-      const attachments = toAttachments(messageEvent.files);
+      const attachments = toAttachments(messageEvent.files, this.config.mediaSigner);
       if (!messageEvent.user || (!messageEvent.text && !attachments)) return;
       if (messageEvent.bot_id) return;
 
@@ -237,7 +248,7 @@ export class SlackAdapter implements BridgeAdapter {
       sourceParentId: edited.thread_ts !== edited.ts ? edited.thread_ts : undefined,
       sender,
       content: edited.text,
-      attachments: toAttachments(edited.files),
+      attachments: toAttachments(edited.files, this.config.mediaSigner),
       timestamp: new Date(),
       rawEvent: event,
     });
@@ -292,36 +303,135 @@ export class SlackAdapter implements BridgeAdapter {
     message: NormalizedMessage,
     mapping: ChannelMapping,
     parentMessageId?: string
-  ): Promise<{ messageId: string }> {
-    const text = MessageTranslator.teamsToSlack(message.content);
+  ): Promise<SendResult> {
+    const { text, blocks, attachments, undelivered } = await this.renderMessage(message);
 
-    const postParams = {
-      channel: targetChannelId,
-      text,
-      username: `${message.sender.displayName} (Teams)`,
-      icon_url: message.sender.avatarUrl,
-      thread_ts: parentMessageId,
-    };
-
-    const res = await this.client.chat.postMessage(postParams);
+    const res = await this.postWithBlocks(blocks, text, (withBlocks) =>
+      this.client.chat.postMessage({
+        channel: targetChannelId,
+        text,
+        blocks: withBlocks,
+        username: `${message.sender.displayName} (Teams)`,
+        icon_url: message.sender.avatarUrl,
+        thread_ts: parentMessageId,
+      })
+    );
 
     if (!res.ts) {
       throw new Error(`Slack postMessage failed: missing timestamp in response`);
     }
 
-    return { messageId: res.ts };
+    return { messageId: res.ts, attachments, undelivered };
+  }
+
+  /**
+   * Tell a Slack user something about their own message, visible only to them.
+   */
+  async notifySender(channelId: string, userId: string, text: string, _mapping: ChannelMapping, threadRootId?: string): Promise<void> {
+    await this.client.chat.postEphemeral({ channel: channelId, user: userId, text, thread_ts: threadRootId });
   }
 
   /**
    * Update a message the bridge posted to Slack (the Teams original was edited).
    * chat.update keeps the original username/icon override.
    */
-  async updateMessage(targetChannelId: string, targetMessageId: string, message: NormalizedMessage): Promise<void> {
-    await this.client.chat.update({
-      channel: targetChannelId,
-      ts: targetMessageId,
-      text: MessageTranslator.teamsToSlack(message.content),
-    });
+  async updateMessage(
+    targetChannelId: string,
+    targetMessageId: string,
+    message: NormalizedMessage
+  ): Promise<{ attachments?: Attachment[] }> {
+    const { text, blocks, attachments } = await this.renderMessage(message);
+    await this.postWithBlocks(blocks, text, (withBlocks) =>
+      this.client.chat.update({ channel: targetChannelId, ts: targetMessageId, text, blocks: withBlocks ?? [] })
+    );
+    return { attachments };
+  }
+
+  /**
+   * Translate a Teams message for Slack. Images are uploaded privately (once; the file id is reused
+   * on edits) and shown as image blocks inside the relayed message, so the sender's name and avatar
+   * override still applies. Images that can't be transferred fall back to a named line.
+   */
+  private async renderMessage(
+    message: NormalizedMessage
+  ): Promise<{ text: string; blocks?: (KnownBlock | Block)[]; attachments?: Attachment[]; undelivered?: Attachment[] }> {
+    let text = MessageTranslator.teamsToSlack(message.content);
+    if (!message.attachments?.length) return { text };
+
+    const delivered: Attachment[] = [];
+    const failed: Attachment[] = [];
+    for (const attachment of message.attachments) {
+      try {
+        const slackFileId = attachment.slackFileId ?? (await this.uploadImage(attachment));
+        delivered.push({ ...attachment, slackFileId });
+      } catch (err) {
+        this.bridge.emit('error', new Error(`Could not transfer "${attachment.name}" to Slack: ${(err as Error).message}`));
+        failed.push(attachment);
+      }
+    }
+
+    if (failed.length) {
+      text = MessageTranslator.teamsToSlack(MessageTranslator.appendAttachmentLines(message.content, failed, 'teams'));
+    }
+    const undelivered = failed.length ? failed : undefined;
+    if (!delivered.length) return { text, undelivered };
+
+    const blocks: (KnownBlock | Block)[] = [];
+    // Section text is capped at 3000 characters per block
+    for (let i = 0; i < text.length; i += 3000) {
+      blocks.push({ type: 'section', text: { type: 'mrkdwn', text: text.slice(i, i + 3000) } });
+    }
+    for (const a of delivered) {
+      blocks.push({ type: 'image', slack_file: { id: a.slackFileId! }, alt_text: a.name, title: { type: 'plain_text', text: a.name } });
+    }
+
+    return { text: text || delivered.map((a) => a.name).join(', '), blocks, attachments: delivered, undelivered };
+  }
+
+  /** Upload an image privately (no channel), for use in image blocks. Returns the Slack file id. */
+  private async uploadImage(attachment: Attachment): Promise<string> {
+    if (!attachment.fetchContent) throw new Error('no content available');
+    const file = await attachment.fetchContent();
+    const res = (await this.client.files.uploadV2({ file, filename: attachment.name, alt_text: attachment.name })) as {
+      files?: { files?: { id?: string }[] }[];
+    };
+    const id = res.files?.[0]?.files?.[0]?.id;
+    if (!id) throw new Error('Slack did not return a file id');
+    return id;
+  }
+
+  /**
+   * Post with image blocks, retrying once if Slack hasn't finished processing a fresh upload
+   * (`invalid_blocks`), then falling back to text only.
+   */
+  private async postWithBlocks<T>(
+    blocks: (KnownBlock | Block)[] | undefined,
+    text: string,
+    post: (blocks: (KnownBlock | Block)[] | undefined) => Promise<T>
+  ): Promise<T> {
+    if (!blocks) return post(undefined);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await post(blocks);
+      } catch (err) {
+        if (slackErrorCode(err) !== 'invalid_blocks') throw err;
+        if (attempt >= 1) {
+          this.bridge.emit('error', new Error('Slack rejected image blocks; posted text only'));
+          return post(undefined);
+        }
+        await new Promise((resolve) => setTimeout(resolve, this.uploadRetryDelayMs));
+      }
+    }
+  }
+
+  /** Delay before retrying image blocks after an upload (overridable in tests) */
+  uploadRetryDelayMs = 1500;
+
+  /**
+   * Download a private Slack file with the bot token (used by the media proxy).
+   */
+  async fetchPrivateFile(url: string): Promise<Response> {
+    return fetch(url, { headers: { Authorization: `Bearer ${this.config.botToken}` }, redirect: 'follow' });
   }
 
   /**
