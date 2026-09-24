@@ -6,7 +6,7 @@
 import Database, { Database as DatabaseType } from 'better-sqlite3';
 import path from 'node:path';
 import fs from 'node:fs';
-import { ChannelMapping, DEFAULT_MAPPING_OPTIONS, Platform, UserIdentity } from '../core/types.js';
+import { Attachment, ChannelMapping, DEFAULT_MAPPING_OPTIONS, Platform, UserIdentity } from '../core/types.js';
 import { runMigrations } from './migrations.js';
 
 export interface MessageMappingRecord {
@@ -25,6 +25,7 @@ export interface MessageMappingRecord {
   /** Original message content and sender, used to re-render mirrored copies (e.g. reaction footers) */
   sourceContent?: string;
   sourceSender?: UserIdentity;
+  sourceAttachments?: Attachment[];
   /** Teams id of the reaction notice posted for this message, if any */
   teamsNoticeMessageId?: string;
   createdAt?: string;
@@ -148,8 +149,8 @@ export class BridgeDatabase {
       INSERT INTO message_mappings (
         mapping_id, slack_channel_id, slack_message_ts,
         teams_team_id, teams_channel_id, teams_message_id, is_thread_root,
-        origin_platform, teams_root_message_id, source_content, source_sender
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        origin_platform, teams_root_message_id, source_content, source_sender, source_attachments
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -163,12 +164,15 @@ export class BridgeDatabase {
       record.originPlatform || null,
       record.teamsRootMessageId || null,
       record.sourceContent ?? null,
-      record.sourceSender ? JSON.stringify(record.sourceSender) : null
+      record.sourceSender ? JSON.stringify(record.sourceSender) : null,
+      serializeAttachments(record.sourceAttachments)
     );
   }
 
-  updateMessageContent(id: number, content: string): void {
-    this.db.prepare('UPDATE message_mappings SET source_content = ? WHERE id = ?').run(content, id);
+  updateMessageContent(id: number, content: string, attachments?: Attachment[]): void {
+    this.db
+      .prepare('UPDATE message_mappings SET source_content = ?, source_attachments = ? WHERE id = ?')
+      .run(content, serializeAttachments(attachments), id);
   }
 
   setTeamsNoticeMessageId(id: number, noticeId: string | null): void {
@@ -252,6 +256,7 @@ export class BridgeDatabase {
       teamsRootMessageId: (r.teams_root_message_id as string) || undefined,
       sourceContent: (r.source_content as string | null) ?? undefined,
       sourceSender: r.source_sender ? (JSON.parse(r.source_sender as string) as UserIdentity) : undefined,
+      sourceAttachments: r.source_attachments ? (JSON.parse(r.source_attachments as string) as Attachment[]) : undefined,
       teamsNoticeMessageId: (r.teams_notice_message_id as string) || undefined,
       createdAt: r.created_at as string,
     };
@@ -349,4 +354,10 @@ export class BridgeDatabase {
   close(): void {
     this.db.close();
   }
+}
+
+/** Store attachment metadata only; `fetchContent` is a transient download function. */
+function serializeAttachments(attachments?: Attachment[]): string | null {
+  if (!attachments?.length) return null;
+  return JSON.stringify(attachments.map(({ fetchContent: _fetch, ...rest }) => rest));
 }

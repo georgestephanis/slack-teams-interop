@@ -7,6 +7,7 @@ import { SLACK_EVENTS_PATH, SlackAdapter } from './adapters/slack/client.js';
 import { TeamsAdapter } from './adapters/teams/client.js';
 import { config } from './config.js';
 import { BridgeCore } from './core/bridge.js';
+import { MediaSigner } from './core/media.js';
 import { createWebServer } from './web/server.js';
 
 async function bootstrap() {
@@ -38,6 +39,13 @@ async function bootstrap() {
   pruneTimer.unref();
 
   // 2. Initialize Slack Adapter (if configured)
+  let mediaSigner: MediaSigner | undefined;
+  if (config.MEDIA_PROXY_SECRET && config.PUBLIC_URL) {
+    mediaSigner = new MediaSigner(config.MEDIA_PROXY_SECRET, config.PUBLIC_URL);
+  } else if (config.MEDIA_PROXY_SECRET) {
+    console.warn('⚠️ MEDIA_PROXY_SECRET is set but PUBLIC_URL is not; Slack images will be relayed to Teams as links.');
+  }
+
   let slackAdapter: SlackAdapter | undefined;
   if (config.SLACK_BOT_TOKEN) {
     console.log('⚡ Starting Slack adapter...');
@@ -48,6 +56,7 @@ async function bootstrap() {
           appToken: config.SLACK_APP_TOKEN,
           signingSecret: config.SLACK_SIGNING_SECRET,
           useSocketMode: config.SLACK_USE_SOCKET_MODE,
+          mediaSigner,
         },
         bridge
       );
@@ -93,6 +102,7 @@ async function bootstrap() {
     bridge,
     publicUrl: config.PUBLIC_URL,
     slackSocketMode: config.SLACK_USE_SOCKET_MODE,
+    mediaSigner,
     slackAdapter,
     teamsAdapter,
   });

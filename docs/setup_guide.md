@@ -95,6 +95,16 @@ TEAMS_SERVICE_URL=https://smba.trafficmanager.net/amer/
 
 ---
 
+## Optional: Show Slack Images Inline in Teams
+
+Images shared in Teams are always copied into Slack, provided the bridge's **Sync File Attachments** option is on. The other direction needs a small opt-in, because Teams loads card images directly from a URL, and Slack file URLs require the bot token.
+
+1. Set `PUBLIC_URL` to the bridge's public HTTPS base URL.
+2. Set `MEDIA_PROXY_SECRET` to a long random value, for example `openssl rand -base64 48`.
+3. Make sure your reverse proxy forwards `/media/slack/*` to the bridge.
+
+With this set, Slack images appear inside the relayed Teams message. Each image URL is **signed**: anyone who has the link can view that one image, but can't use it to reach anything else. Changing `MEDIA_PROXY_SECRET` revokes every link at once, including on older messages. The proxy only fetches from `files.slack.com`, refuses SVGs, and caps images at 20 MB. Without these settings, Slack images are relayed as a named link instead.
+
 ## 5. Running the Service
 
 ### Option A: Running with Docker Compose (Recommended)

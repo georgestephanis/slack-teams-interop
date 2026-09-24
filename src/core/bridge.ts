@@ -10,12 +10,20 @@ import { ThreadMapper } from './thread-mapper.js';
 import { MessageTranslator, ReactionGroup } from './translator.js';
 import { MessageMappingRecord } from '../db/index.js';
 import {
+  Attachment,
   ChannelMapping,
+  isImageAttachment,
   NormalizedMessage,
   NormalizedMessageRef,
   NormalizedReaction,
   Platform,
 } from './types.js';
+
+export interface SendResult {
+  messageId: string;
+  /** Attachments as actually delivered (e.g. with `slackFileId` set), to store for re-renders */
+  attachments?: Attachment[];
+}
 
 export interface BridgeAdapter {
   platform: Platform;
@@ -24,7 +32,7 @@ export interface BridgeAdapter {
     message: NormalizedMessage,
     mapping: ChannelMapping,
     parentMessageId?: string
-  ): Promise<{ messageId: string }>;
+  ): Promise<SendResult>;
   sendReaction?(
     targetChannelId: string,
     targetMessageId: string,
@@ -44,7 +52,7 @@ export interface BridgeAdapter {
     mapping: ChannelMapping,
     threadRootId?: string,
     options?: { footer?: string }
-  ): Promise<void>;
+  ): Promise<void | { attachments?: Attachment[] }>;
   /** Post a plain bridge notice (not attributed to a user) into a thread. */
   postNotice?(
     targetChannelId: string,
@@ -135,9 +143,10 @@ export class BridgeCore extends EventEmitter {
         return;
       }
 
-      // Files are relayed as named links (when syncFiles is on); drop messages left with nothing to say
-      msg = this.withAttachmentLines(msg, mapping);
-      if (!msg.content.trim()) {
+      // Files: images are transferred where possible, the rest become named links (when syncFiles
+      // is on). Drop messages left with nothing to say.
+      msg = this.prepareAttachments(msg, mapping, targetPlatform);
+      if (!msg.content.trim() && !msg.attachments?.length) {
         return;
       }
 
@@ -182,6 +191,7 @@ export class BridgeCore extends EventEmitter {
           teamsRootMessageId: targetParentId,
           sourceContent: msg.content,
           sourceSender: msg.sender,
+          sourceAttachments: result.attachments ?? msg.attachments,
         });
       } else {
         this.threadMapper.recordMessagePair({
@@ -196,6 +206,7 @@ export class BridgeCore extends EventEmitter {
           teamsRootMessageId: msg.sourceParentId,
           sourceContent: msg.content,
           sourceSender: msg.sender,
+          sourceAttachments: result.attachments ?? msg.attachments,
         });
       }
 
@@ -311,12 +322,32 @@ export class BridgeCore extends EventEmitter {
     }
   }
 
-  /** Fold a message's attachments into its content as `📎` link lines, if the mapping syncs files. */
-  private withAttachmentLines(msg: NormalizedMessage, mapping: ChannelMapping): NormalizedMessage {
-    if (!mapping.options.syncFiles || !msg.attachments?.length) return msg;
+  /**
+   * Decide how a message's attachments reach the target platform (only when the mapping syncs files):
+   * images the target can show inline stay in `attachments` for the adapter to transfer; everything
+   * else is folded into the content as `📎` link lines. Metadata from an earlier relay of the same
+   * message (`previous`) is reused, so edits don't re-upload images.
+   */
+  private prepareAttachments(
+    msg: NormalizedMessage,
+    mapping: ChannelMapping,
+    targetPlatform: Platform,
+    previous?: Attachment[]
+  ): NormalizedMessage {
+    if (!mapping.options.syncFiles || !msg.attachments?.length) return { ...msg, attachments: undefined };
+
+    const known = new Map((previous ?? []).map((a) => [a.id, a]));
+    const merged = msg.attachments.map((a) => ({ ...known.get(a.id), ...a, slackFileId: a.slackFileId ?? known.get(a.id)?.slackFileId }));
+
+    const canShowInline = (a: Attachment) =>
+      isImageAttachment(a) && (targetPlatform === 'slack' ? Boolean(a.fetchContent || a.slackFileId) : Boolean(a.displayUrl));
+    const inline = merged.filter(canShowInline);
+    const linked = merged.filter((a) => !canShowInline(a));
+
     return {
       ...msg,
-      content: MessageTranslator.appendAttachmentLines(msg.content, msg.attachments, msg.sourcePlatform),
+      content: MessageTranslator.appendAttachmentLines(msg.content, linked, msg.sourcePlatform),
+      attachments: inline.length ? inline : undefined,
     };
   }
 
@@ -342,6 +373,7 @@ export class BridgeCore extends EventEmitter {
       sourceMessageId: onSlack ? pair.slackMessageTs : pair.teamsMessageId,
       sender: pair.sourceSender,
       content: pair.sourceContent,
+      attachments: pair.sourceAttachments,
       timestamp: new Date(),
     };
   }
@@ -368,8 +400,8 @@ export class BridgeCore extends EventEmitter {
 
       const target = this.findMirroredTarget(msg.sourcePlatform, msg.sourceChannelId, msg.sourceMessageId);
       if (!target || !target.mapping.options.syncEdits) return;
-      msg = this.withAttachmentLines(msg, target.mapping);
-      if (!msg.content.trim()) return;
+      msg = this.prepareAttachments(msg, target.mapping, target.targetPlatform, target.pair.sourceAttachments);
+      if (!msg.content.trim() && !msg.attachments?.length) return;
 
       // Only the author's side can edit; ignore edits to the bridge's own mirror copies.
       // Rows recorded before origin tracking have no originPlatform; an edit event from a
@@ -386,7 +418,7 @@ export class BridgeCore extends EventEmitter {
             ? MessageTranslator.formatReactionFooter(this.reactionGroups(target.pair.id!, 'slack'))
             : undefined;
 
-        await adapter.updateMessage!(
+        const updated = await adapter.updateMessage!(
           target.targetChannelId,
           target.targetMessageId,
           msg,
@@ -394,7 +426,7 @@ export class BridgeCore extends EventEmitter {
           target.threadRootId,
           footer ? { footer } : undefined
         );
-        this.db.updateMessageContent(target.pair.id!, msg.content);
+        this.db.updateMessageContent(target.pair.id!, msg.content, updated?.attachments ?? msg.attachments);
       });
 
       this.emit('message:edited', {

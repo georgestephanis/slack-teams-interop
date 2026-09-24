@@ -5,7 +5,7 @@
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](Dockerfile)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](tsconfig.json)
 
-**InterBridge** is an enterprise-ready, self-hostable bridge connecting Slack and Microsoft Teams channels with real-time two-way messaging, threaded replies, edits, reactions, and file-share links — without paying SaaS fees or migrating either platform.
+**InterBridge** is an enterprise-ready, self-hostable bridge connecting Slack and Microsoft Teams channels with real-time two-way messaging, threaded replies, edits, reactions, images, and file-share links — without paying SaaS fees or migrating either platform.
 
 ---
 
@@ -19,7 +19,7 @@
 - **Bi-Directional Thread Continuity**: Parent/child reply hierarchies are preserved across both platforms via SQLite message ID mapping.
 - **Edit & Delete Sync**: Edits and deletions on the platform where a message was written are mirrored to the other side (per-bridge toggles). Deleting the bridge's mirror copy never deletes the author's original.
 - **Reaction Mirroring**: Teams reactions appear as native Slack reactions. Teams bots can't add reactions, so Slack reactions appear as a live footer on bridge-posted Teams messages (`👍 3 · 🎉 1 — reactions from Slack`). Optionally, they can also appear as a single, self-updating thread reply on messages written in Teams.
-- **File Share Links**: Files shared on either side are relayed as a named `📎` link to the original (per-bridge toggle). Files aren't copied across, so opening one may require access on the source platform; true transfer is tracked in #12.
+- **Images & File Links**: Images shared in Teams are copied into Slack and shown inside the relayed message. Slack images appear inline in Teams when the optional signed media proxy is enabled (`MEDIA_PROXY_SECRET`). Other files are relayed as a named `📎` link to the original, so opening one may require access on the source platform. All of this is behind a per-bridge toggle.
 - **Echo & Loop Prevention**: Relayed message-ID tracking and bot ID filtering prevent infinite relay loops.
 - **Zero Inbound Ports for Slack (Socket Mode)**: Connects to Slack via secure outbound WebSocket. Only the Teams Bot Framework endpoint needs public HTTPS access (compatible with Cloudflare Tunnel, Caddy, or standard reverse proxies).
 - **Matrix.org Protocol Compatibility**: Uses a protocol-neutral normalized event model inspired by Matrix `m.room.message` events.

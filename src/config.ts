@@ -15,6 +15,9 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((val) => (val ? val.replace(/\/+$/, '') : undefined)),
+  // Enables showing Slack images inline in Teams via signed proxy URLs (/media/slack/...). Anyone with
+  // such a link can view that image; rotating this secret revokes all of them. Requires PUBLIC_URL.
+  MEDIA_PROXY_SECRET: z.string().min(32, 'MEDIA_PROXY_SECRET must be at least 32 characters').optional(),
   DATABASE_PATH: z.string().default('./data/bridge.sqlite'),
   MESSAGE_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(30),
 

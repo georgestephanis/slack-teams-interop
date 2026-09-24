@@ -309,8 +309,14 @@ export class MessageTranslator {
   /**
    * Generate an Adaptive Card payload for Teams display.
    */
-  static formatForTeamsAdaptiveCard(sender: UserIdentity, content: string, footer?: string): object {
+  static formatForTeamsAdaptiveCard(
+    sender: UserIdentity,
+    content: string,
+    footer?: string,
+    images: { url: string; name: string }[] = []
+  ): object {
     const cleanContent = this.slackToTeams(content);
+    const imageBlocks = images.map((i) => ({ type: 'Image', url: i.url, altText: i.name, size: 'Stretch', spacing: 'Small' }));
     const footerBlocks = footer
       ? [{ type: 'TextBlock', text: footer, isSubtle: true, size: 'Small', wrap: true, spacing: 'Small' }]
       : [];
@@ -360,6 +366,7 @@ export class MessageTranslator {
           text: cleanContent,
           wrap: true
         },
+        ...imageBlocks,
         ...footerBlocks
       ]
     };

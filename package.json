@@ -22,6 +22,7 @@
     "@slack/web-api": "^8.1.1",
     "better-sqlite3": "^13.0.3",
     "botbuilder": "^4.23.3",
+    "botframework-connector": "^4.23.3",
     "dotenv": "^18.0.3",
     "express": "^5.2.1",
     "lru-cache": "^11.5.3",

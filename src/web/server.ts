@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
 import { BridgeCore } from '../core/bridge.js';
+import { MAX_TRANSFER_BYTES, MEDIA_PROXY_PATH, MediaSigner } from '../core/media.js';
 import { SLACK_EVENTS_PATH, SlackAdapter } from '../adapters/slack/client.js';
 import { TeamsAdapter } from '../adapters/teams/client.js';
 import { ChannelMapping } from '../core/types.js';
@@ -24,6 +25,8 @@ export interface ServerOptions {
   slackSocketMode?: boolean;
   slackAdapter?: SlackAdapter;
   teamsAdapter?: TeamsAdapter;
+  /** Enables the signed Slack image proxy (needs MEDIA_PROXY_SECRET and PUBLIC_URL) */
+  mediaSigner?: MediaSigner;
 }
 
 export function createWebServer(options: ServerOptions) {
@@ -53,6 +56,50 @@ export function createWebServer(options: ServerOptions) {
   // must see the raw body, so it is mounted before admin auth and express.json().
   if (slackAdapter?.httpRouter) {
     app.use(slackAdapter.httpRouter);
+  }
+
+  // Signed Slack image proxy, so Teams can show Slack images inline. Authorized by the URL's
+  // signature rather than the admin password, because Teams clients load these images directly.
+  if (options.mediaSigner && slackAdapter) {
+    const signer = options.mediaSigner;
+    app.get(`${MEDIA_PROXY_PATH}/:token`, async (req: Request, res: Response) => {
+      const fileUrl = signer.verify(String(req.params.token));
+      if (!fileUrl) {
+        res.status(404).end();
+        return;
+      }
+
+      try {
+        const upstream = await slackAdapter.fetchPrivateFile(fileUrl);
+        const type = upstream.headers.get('content-type') || '';
+        const length = Number(upstream.headers.get('content-length') || 0);
+        // Only raster images; SVG can carry script
+        if (!upstream.ok || !type.startsWith('image/') || type.startsWith('image/svg')) {
+          res.status(upstream.status === 404 ? 404 : 502).end();
+          return;
+        }
+        if (length > MAX_TRANSFER_BYTES) {
+          res.status(413).end();
+          return;
+        }
+
+        const body = Buffer.from(await upstream.arrayBuffer());
+        if (body.length > MAX_TRANSFER_BYTES) {
+          res.status(413).end();
+          return;
+        }
+        res.set({
+          'Content-Type': type,
+          'Cache-Control': 'private, max-age=86400',
+          'X-Content-Type-Options': 'nosniff',
+          'Content-Security-Policy': "default-src 'none'",
+        });
+        res.send(body);
+      } catch (err) {
+        bridge.emit('error', err);
+        res.status(502).end();
+      }
+    });
   }
 
   // Unauthenticated liveness probe (used by the Docker healthcheck)

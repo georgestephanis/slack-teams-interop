@@ -14,11 +14,14 @@ import {
   TeamsActivityHandler,
   TurnContext,
 } from 'botbuilder';
+import { MicrosoftAppCredentials } from 'botframework-connector';
 import { BridgeAdapter, BridgeCore } from '../../core/bridge.js';
 import { MessageTranslator } from '../../core/translator.js';
+import { MAX_TRANSFER_BYTES } from '../../core/media.js';
 import {
   Attachment,
   ChannelMapping,
+  isImageAttachment,
   NormalizedMessage,
   NormalizedReaction,
   Platform,
@@ -91,7 +94,7 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
       }
 
       const text = activity.text?.trim() || '';
-      const attachments = teamsAttachments(activity);
+      const attachments = teamsAttachments(activity, (url) => this.downloadAttachment(url));
       if (!text && !attachments) {
         await next();
         return;
@@ -128,7 +131,7 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
     this.onTeamsMessageEditEvent(async (context: TurnContext, next) => {
       const activity = context.activity;
       const text = activity.text?.trim() || '';
-      const attachments = teamsAttachments(activity);
+      const attachments = teamsAttachments(activity, (url) => this.downloadAttachment(url));
       // Attachment-only edits are relayed too; BridgeCore drops them if syncFiles is off
       if (activity.id && (text || attachments)) {
         const teamsChannelId = this.channelIdOf(activity);
@@ -331,11 +334,40 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
    * Build the outbound Teams activity for a relayed Slack message, per the mapping's display style.
    */
   private buildActivity(message: NormalizedMessage, mapping: ChannelMapping, footer?: string): Partial<Activity> {
+    // Slack images arrive with a signed proxy URL Teams can load directly
+    const images = (message.attachments || [])
+      .filter((a) => a.displayUrl && isImageAttachment(a))
+      .map((a) => ({ url: a.displayUrl!, name: a.name, contentType: a.contentType }));
+
     if (mapping.options.teamsFormatStyle === 'adaptive_card') {
-      const cardPayload = MessageTranslator.formatForTeamsAdaptiveCard(message.sender, message.content, footer);
+      const cardPayload = MessageTranslator.formatForTeamsAdaptiveCard(message.sender, message.content, footer, images);
       return MessageFactory.attachment(CardFactory.adaptiveCard(cardPayload));
     }
-    return MessageFactory.text(MessageTranslator.formatForTeamsMarkdown(message.sender, message.content, footer));
+
+    const activity = MessageFactory.text(MessageTranslator.formatForTeamsMarkdown(message.sender, message.content, footer));
+    if (images.length) {
+      activity.attachments = images.map((i) => ({ contentType: i.contentType, contentUrl: i.url, name: i.name }));
+    }
+    return activity;
+  }
+
+  /**
+   * Download an inline Teams image using the bot's own Bot Framework token. Only Microsoft
+   * attachment hosts are allowed, so the token is never sent to a URL supplied in a message.
+   */
+  async downloadAttachment(url: string): Promise<Buffer> {
+    if (!isTeamsAttachmentHost(url)) throw new Error('refusing to send bot credentials to a non-Teams host');
+
+    const credentials = new MicrosoftAppCredentials(this.config.appId, this.config.appPassword || '');
+    const token = await credentials.getToken();
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error(`Teams attachment download failed: HTTP ${res.status}`);
+
+    const length = Number(res.headers.get('content-length') || 0);
+    if (length > MAX_TRANSFER_BYTES) throw new Error('attachment is too large to transfer');
+    const body = Buffer.from(await res.arrayBuffer());
+    if (body.length > MAX_TRANSFER_BYTES) throw new Error('attachment is too large to transfer');
+    return body;
   }
 
   /**
@@ -419,7 +451,23 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
  * Extract user-visible file attachments from a Teams activity (links only; files aren't transferred).
  * Skips the `text/html` copy of the message body and cards.
  */
-export function teamsAttachments(activity: Partial<Activity>): Attachment[] | undefined {
+/** Hosts that serve Teams message attachments to bots (inline images). */
+export function isTeamsAttachmentHost(url: string): boolean {
+  try {
+    const { protocol, hostname } = new URL(url);
+    return (
+      protocol === 'https:' &&
+      (hostname === 'smba.trafficmanager.net' || hostname.endsWith('.asm.skype.com') || hostname.endsWith('.teams.microsoft.com'))
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function teamsAttachments(
+  activity: Partial<Activity>,
+  download?: (url: string) => Promise<Buffer>
+): Attachment[] | undefined {
   const files = (activity.attachments || []).flatMap((a, i): Attachment[] => {
     const type = a.contentType || '';
     if (type === 'text/html' || type.startsWith('application/vnd.microsoft.card')) return [];
@@ -439,8 +487,12 @@ export function teamsAttachments(activity: Partial<Activity>): Attachment[] | un
     }
 
     if (type.startsWith('image/')) {
-      // Inline image URLs require the bot's credentials, so there's nothing a Slack user could open
-      return [{ id, name: a.name || 'image', contentType: type, downloadUrl: a.contentUrl }];
+      // Inline image URLs require the bot's credentials, so there's no link a Slack user could open;
+      // the bridge downloads and re-uploads them instead (when the host is a known Teams host).
+      const url = a.contentUrl;
+      const fetchContent = url && download && isTeamsAttachmentHost(url) ? () => download(url) : undefined;
+      // Keyed by URL so an edit re-delivering the same image is recognised (and not re-uploaded)
+      return [{ id: url || id, name: a.name || 'image', contentType: type, downloadUrl: url, fetchContent }];
     }
 
     return [];

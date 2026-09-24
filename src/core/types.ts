@@ -29,6 +29,16 @@ export interface Attachment {
   /** Link a person can open to view the file on the source platform (may require access there) */
   permalink?: string;
   thumbnailUrl?: string;
+  /** Publicly loadable image URL (the bridge's signed media proxy), so the other platform can show it inline */
+  displayUrl?: string;
+  /** Downloads the file with the source platform's credentials. Transient: never stored. */
+  fetchContent?: () => Promise<Buffer>;
+  /** Id of the copy uploaded to Slack, once transferred (reused on edits and re-renders) */
+  slackFileId?: string;
+}
+
+export function isImageAttachment(a: Attachment): boolean {
+  return a.contentType.startsWith('image/') && a.contentType !== 'image/svg+xml';
 }
 
 export interface NormalizedMessage {
