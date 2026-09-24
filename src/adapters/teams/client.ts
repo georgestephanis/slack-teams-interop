@@ -128,7 +128,9 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
     this.onTeamsMessageEditEvent(async (context: TurnContext, next) => {
       const activity = context.activity;
       const text = activity.text?.trim() || '';
-      if (activity.id && text) {
+      const attachments = teamsAttachments(activity);
+      // Attachment-only edits are relayed too; BridgeCore drops them if syncFiles is off
+      if (activity.id && (text || attachments)) {
         const teamsChannelId = this.channelIdOf(activity);
         await this.bridge.handleIncomingEdit({
           id: `teams-edit-${teamsChannelId}-${activity.id}`,
@@ -143,7 +145,7 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
             platform: 'teams',
           },
           content: text,
-          attachments: teamsAttachments(activity),
+          attachments,
           timestamp: new Date(),
           rawEvent: activity,
         });

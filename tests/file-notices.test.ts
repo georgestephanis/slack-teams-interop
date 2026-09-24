@@ -96,4 +96,18 @@ describe('File share notices', () => {
     expect(out).toBe('notes\n📎 [Q3 final.xlsx](https://contoso.sharepoint.com/x) (shared in Teams)\n📎 image (shared in Teams)');
     expect(MessageTranslator.teamsToSlack(out)).toContain('<https://contoso.sharepoint.com/x|Q3 final.xlsx>');
   });
+
+  it('relays an edit that leaves only attachments, and skips it when syncFiles is off', async () => {
+    const withText = { ...fileOnly, content: 'draft notes' };
+    teams.updateMessage = vi.fn().mockResolvedValue(undefined);
+
+    bridge.db.saveChannelMapping(mapping(true));
+    await bridge.handleIncomingMessage(withText);
+    await bridge.handleIncomingEdit({ ...fileOnly, sender: { ...fileOnly.sender } });
+    expect(vi.mocked(teams.updateMessage).mock.calls[0][2].content).toContain('report.pdf');
+
+    bridge.db.saveChannelMapping(mapping(false));
+    await bridge.handleIncomingEdit({ ...fileOnly });
+    expect(teams.updateMessage).toHaveBeenCalledTimes(1);
+  });
 });
