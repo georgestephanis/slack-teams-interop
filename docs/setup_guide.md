@@ -29,7 +29,7 @@ This guide walks you through setting up your self-hosted Slack <-> Microsoft Tea
    - Name it `interbridge-socket`, add the `connections:write` scope, and copy the token (`xapp-...`).
 7. Copy the **Bot User OAuth Token** (`xoxb-...`) from **OAuth & Permissions**.
 
-> **Invite the bot to each Slack channel you bridge.** Slack only sends a bot events from channels it's a member of. In the channel, run `/invite @InterBridge`. Until you do, nothing from that channel is relayed.
+> **Invite the bot to each Slack channel you bridge.** Slack only delivers events to a bot from channels the bot is a member of. In the channel, run `/invite @InterBridge`. Until you do, nothing from that channel is relayed.
 
 ### Alternative: HTTP (Events API) mode
 
