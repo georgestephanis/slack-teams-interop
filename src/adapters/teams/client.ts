@@ -59,6 +59,10 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
       this.bridge.dedup.registerBotId('teams', this.botAppId);
     }
 
+    if (config.appType === 'SingleTenant' && !config.appTenantId) {
+      throw new Error('Teams SingleTenant bots require a tenant ID (TEAMS_TENANT_ID)');
+    }
+
     const botAuth = new ConfigurationBotFrameworkAuthentication({
       MicrosoftAppId: config.appId,
       MicrosoftAppPassword: config.appPassword,
