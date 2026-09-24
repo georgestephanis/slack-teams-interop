@@ -142,6 +142,8 @@ describe('Image routing in BridgeCore', () => {
     await bridge.handleIncomingMessage(teamsMsg([{ id: 'x', name: 'image', contentType: 'image/png' }]));
 
     const sent = vi.mocked(slack.sendMessage).mock.calls[0][1];
+    // BridgeCore hands the adapter content in the *source* (Teams) dialect; the Slack adapter
+    // translates `*italic*` to `_italic_` when posting (asserted in the adapter tests below).
     expect(sent.content).toBe("look\n📎 image (shared in Teams)\n*Files aren't copied between Slack and Teams.*");
     expect(sent.attachments).toBeUndefined();
   });
