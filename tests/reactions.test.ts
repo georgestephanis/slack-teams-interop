@@ -233,4 +233,16 @@ describe('Reaction mirroring', () => {
       expect(errors).toEqual([]);
     });
   });
+
+  it('keeps the pair when deleting the reaction notice fails', async () => {
+    bridge.db.saveChannelMapping(mapping({ reactionNotices: true }));
+    await bridge.handleIncomingMessage(teamsMsg('tm-1', 'oops'));
+    await bridge.handleIncomingReaction(slackReaction('1711.001', '+1'));
+    teams.deleteMessage = vi.fn().mockRejectedValue(new Error('Teams 503'));
+
+    await bridge.handleIncomingDelete({ sourcePlatform: 'teams', sourceChannelId: TEAMS_CH, sourceMessageId: 'tm-1', senderId: 'AAD_BOB' });
+
+    expect(errors).toHaveLength(1);
+    expect(bridge.db.findByTeamsMessage(TEAMS_CH, 'tm-1')?.teamsNoticeMessageId).toBe('notice-2');
+  });
 });
