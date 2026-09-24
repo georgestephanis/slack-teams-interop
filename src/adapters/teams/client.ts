@@ -475,7 +475,8 @@ export function isTeamsAttachmentHost(url: string): boolean {
     const { protocol, hostname } = new URL(url);
     return (
       protocol === 'https:' &&
-      (hostname === 'smba.trafficmanager.net' || hostname.endsWith('.asm.skype.com') || hostname.endsWith('.teams.microsoft.com'))
+      (hostname === 'smba.trafficmanager.net' ||
+        ['asm.skype.com', 'teams.microsoft.com'].some((d) => hostname === d || hostname.endsWith(`.${d}`)))
     );
   } catch {
     return false;
