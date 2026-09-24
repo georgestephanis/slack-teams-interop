@@ -6,7 +6,7 @@ import { MediaSigner } from '../src/core/media.js';
 import { SlackAdapter } from '../src/adapters/slack/client.js';
 import { TeamsAdapter, isTeamsAttachmentHost, teamsAttachments } from '../src/adapters/teams/client.js';
 import { createWebServer } from '../src/web/server.js';
-import { ChannelMapping, NormalizedMessage } from '../src/core/types.js';
+import { ChannelMapping, isImageAttachment, NormalizedMessage } from '../src/core/types.js';
 
 const SECRET = 'x'.repeat(40);
 const signer = new MediaSigner(SECRET, 'https://bridge.example.com');
@@ -39,6 +39,18 @@ function removeDb(dbPath: string) {
   if (!fs.existsSync('./data')) return;
   for (const f of fs.readdirSync('./data')) if (f.startsWith(base)) fs.rmSync(`./data/${f}`, { force: true });
 }
+
+describe('isImageAttachment', () => {
+  it('ignores MIME parameters and case, and always excludes SVG', () => {
+    const img = (contentType: string) => isImageAttachment({ id: 'a', name: 'a', contentType });
+    expect(img('image/png')).toBe(true);
+    expect(img('image/JPEG; foo=bar')).toBe(true);
+    expect(img('image/svg+xml')).toBe(false);
+    expect(img('image/svg+xml; charset=utf-8')).toBe(false);
+    expect(img(' IMAGE/SVG+XML ')).toBe(false);
+    expect(img('application/pdf')).toBe(false);
+  });
+});
 
 describe('MediaSigner', () => {
   it('round-trips Slack file URLs and rejects tampering or other hosts', () => {
@@ -251,7 +263,10 @@ describe('Teams image handling', () => {
   it('only offers downloads from Microsoft attachment hosts', () => {
     expect(isTeamsAttachmentHost('https://us-api.asm.skype.com/v1/objects/a/views/imgo')).toBe(true);
     expect(isTeamsAttachmentHost('https://smba.trafficmanager.net/amer/v3/attachments/a')).toBe(true);
+    expect(isTeamsAttachmentHost('https://asm.skype.com/v1/objects/a')).toBe(true);
+    expect(isTeamsAttachmentHost('https://teams.microsoft.com/x')).toBe(true);
     expect(isTeamsAttachmentHost('https://asm.skype.com.evil.example/x')).toBe(false);
+    expect(isTeamsAttachmentHost('https://evilasm.skype.com/x')).toBe(false);
     expect(isTeamsAttachmentHost('http://us-api.asm.skype.com/x')).toBe(false);
 
     const download = vi.fn();

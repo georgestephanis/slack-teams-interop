@@ -37,8 +37,11 @@ export interface Attachment {
   slackFileId?: string;
 }
 
+/** Raster images the bridge will transfer or proxy (SVG excluded: it can carry script). */
 export function isImageAttachment(a: Attachment): boolean {
-  return a.contentType.startsWith('image/') && a.contentType !== 'image/svg+xml';
+  // Ignore parameters and case, e.g. `IMAGE/SVG+XML; charset=utf-8`
+  const type = a.contentType.split(';')[0].trim().toLowerCase();
+  return type.startsWith('image/') && !type.startsWith('image/svg');
 }
 
 export interface NormalizedMessage {
