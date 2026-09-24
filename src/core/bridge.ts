@@ -430,13 +430,13 @@ export class BridgeCore extends EventEmitter {
 
       await adapter.deleteMessage(target.targetChannelId, target.targetMessageId, target.mapping, target.threadRootId);
 
-      // A deleted Teams original takes its Slack-reaction notice with it
+      // A deleted Teams original takes its Slack-reaction notice with it. If that fails, keep the
+      // pair (and its notice id) rather than forgetting the notice exists; it's pruned with the rest.
       const noticeId = target.pair.teamsNoticeMessageId;
       if (noticeId) {
         await this.adapters
           .get('teams')
-          ?.deleteMessage?.(target.pair.teamsChannelId, noticeId, target.mapping, target.pair.teamsRootMessageId ?? target.pair.teamsMessageId)
-          .catch((err) => this.emit('error', err));
+          ?.deleteMessage?.(target.pair.teamsChannelId, noticeId, target.mapping, target.pair.teamsRootMessageId ?? target.pair.teamsMessageId);
       }
 
       this.db.deleteMessageMapping(target.pair.id!);
