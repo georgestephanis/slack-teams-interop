@@ -38,10 +38,17 @@ describe('Teams service URL persistence', () => {
     adapter.rememberServiceUrl({
       serviceUrl: 'https://smba.trafficmanager.net/apac/',
       conversation: { id: '19:general@thread.tacv2' } as any,
-      channelData: { team: { id: '19:general@thread.tacv2' } },
+      channelData: { team: { id: '19:team-apac@thread.tacv2' } },
     });
+    // A more recent URL from an unrelated team, so the "most recently seen" fallback would pick it
+    adapter.rememberServiceUrl({
+      serviceUrl: 'https://smba.trafficmanager.net/emea/',
+      conversation: { id: '19:elsewhere@thread.tacv2' } as any,
+      channelData: { team: { id: '19:team-emea@thread.tacv2' } },
+    });
+    bridge.db['db'].prepare("UPDATE teams_conversations SET updated_at = datetime('now', '+1 minute') WHERE team_id = ?").run('19:team-emea@thread.tacv2');
 
-    expect(adapter.resolveServiceUrl('19:other@thread.tacv2', '19:general@thread.tacv2')).toBe(
+    expect(adapter.resolveServiceUrl('19:other@thread.tacv2', '19:team-apac@thread.tacv2')).toBe(
       'https://smba.trafficmanager.net/apac/'
     );
   });
