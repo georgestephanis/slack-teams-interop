@@ -1,7 +1,7 @@
 # InterBridge: Self-Hosted Slack <-> Microsoft Teams Channel Bridge
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Node](https://img.shields.io/badge/node-v20+-green.svg)](https://nodejs.org)
+[![Node](https://img.shields.io/badge/node-v22+-green.svg)](https://nodejs.org)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](Dockerfile)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](tsconfig.json)
 
@@ -58,7 +58,7 @@
 ## Quickstart
 
 ### 1. Prerequisites
-- Node.js 20+ or Docker
+- Node.js 22+ or Docker
 - A Slack workspace with permission to create an app
 - A Microsoft Teams tenant where you are a Team Owner
 - A free Azure Bot Service registration (F0 Tier)

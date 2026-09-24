@@ -8,7 +8,7 @@ This guide walks you through setting up your self-hosted Slack <-> Microsoft Tea
 - A **Slack Workspace** where you can create apps (or Admin privileges).
 - A **Microsoft 365 Tenant** where you are a Team Owner of the target team (or have permission to add custom apps).
 - An **Azure Account** (Free tier is sufficient for Azure AI Bot Service F0).
-- Docker or Node.js 20+ installed on your server.
+- Docker or Node.js 22+ installed on your server.
 
 ---
 
