@@ -17,6 +17,7 @@ import {
 import { BridgeAdapter, BridgeCore } from '../../core/bridge.js';
 import { MessageTranslator } from '../../core/translator.js';
 import {
+  Attachment,
   ChannelMapping,
   NormalizedMessage,
   NormalizedReaction,
@@ -90,7 +91,8 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
       }
 
       const text = activity.text?.trim() || '';
-      if (!text) {
+      const attachments = teamsAttachments(activity);
+      if (!text && !attachments) {
         await next();
         return;
       }
@@ -113,6 +115,7 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
         sourceParentId: activity.replyToId,
         sender,
         content: text,
+        attachments,
         timestamp: activity.timestamp ? new Date(activity.timestamp) : new Date(),
         rawEvent: activity,
       };
@@ -140,6 +143,7 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
             platform: 'teams',
           },
           content: text,
+          attachments: teamsAttachments(activity),
           timestamp: new Date(),
           rawEvent: activity,
         });
@@ -405,4 +409,38 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
   async processHttpRequest(req: unknown, res: unknown): Promise<void> {
     await this.adapter.process(req as any, res as any, (context) => this.run(context));
   }
+}
+
+/**
+ * Extract user-visible file attachments from a Teams activity (links only; files aren't transferred).
+ * Skips the `text/html` copy of the message body and cards.
+ */
+export function teamsAttachments(activity: Partial<Activity>): Attachment[] | undefined {
+  const files = (activity.attachments || []).flatMap((a, i): Attachment[] => {
+    const type = a.contentType || '';
+    if (type === 'text/html' || type.startsWith('application/vnd.microsoft.card')) return [];
+
+    const id = `${activity.id || 'teams'}-att-${i}`;
+    if (type === 'reference' || type === 'application/vnd.microsoft.teams.file.download.info') {
+      const content = (a.content || {}) as { downloadUrl?: string; fileType?: string };
+      return [
+        {
+          id,
+          name: a.name || 'file',
+          contentType: content.fileType || type,
+          downloadUrl: content.downloadUrl || a.contentUrl,
+          permalink: a.contentUrl,
+        },
+      ];
+    }
+
+    if (type.startsWith('image/')) {
+      // Inline image URLs require the bot's credentials, so there's nothing a Slack user could open
+      return [{ id, name: a.name || 'image', contentType: type, downloadUrl: a.contentUrl }];
+    }
+
+    return [];
+  });
+
+  return files.length ? files : undefined;
 }

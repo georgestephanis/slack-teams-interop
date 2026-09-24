@@ -3,7 +3,7 @@
  * Handles bidirectional conversion between Slack mrkdwn and Teams CommonMark/HTML.
  */
 
-import { UserIdentity } from './types.js';
+import { Attachment, Platform, UserIdentity } from './types.js';
 
 /**
  * Teams reaction types mapped to Slack emoji names.
@@ -83,6 +83,28 @@ export class MessageTranslator {
     });
     const quote = excerptOf ? ` on "${this.excerpt(excerptOf)}"` : '';
     return `_Reactions from Slack${quote}:_ ${parts.join(' · ')}`;
+  }
+
+  /**
+   * Append one `📎 name` line per attachment to message content, written in the source platform's
+   * dialect so the normal translation turns it into a link on the other side. The files themselves
+   * aren't transferred (#12); viewers may need access on the source platform to open them.
+   */
+  static appendAttachmentLines(content: string, attachments: Attachment[] | undefined, dialect: Platform): string {
+    if (!attachments?.length) return content;
+    const where = dialect === 'slack' ? 'Slack' : 'Teams';
+
+    const lines = attachments.map((a) => {
+      if (!a.permalink) return `📎 ${a.name} (shared in ${where})`;
+      if (dialect === 'slack') {
+        const label = a.name.replace(/[<>|]/g, '');
+        return `📎 <${a.permalink}|${label}> (shared in ${where})`;
+      }
+      const label = a.name.replace(/[[\]]/g, '');
+      return `📎 [${label}](${a.permalink}) (shared in ${where})`;
+    });
+
+    return [content.trim(), ...lines].filter(Boolean).join('\n');
   }
 
   /** First ~60 characters of a message as plain text, for quoting. */

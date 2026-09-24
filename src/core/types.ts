@@ -24,7 +24,10 @@ export interface Attachment {
   name: string;
   contentType: string;
   size?: number;
-  downloadUrl: string;
+  /** Direct file URL; usually requires the source platform's credentials */
+  downloadUrl?: string;
+  /** Link a person can open to view the file on the source platform (may require access there) */
+  permalink?: string;
   thumbnailUrl?: string;
 }
 

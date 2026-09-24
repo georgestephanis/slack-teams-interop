@@ -9,6 +9,7 @@ import { WebClient } from '@slack/web-api';
 import { BridgeAdapter, BridgeCore } from '../../core/bridge.js';
 import { MessageTranslator } from '../../core/translator.js';
 import {
+  Attachment,
   ChannelMapping,
   NormalizedMessage,
   NormalizedReaction,
@@ -23,9 +24,42 @@ export interface SlackAdapterConfig {
   useSocketMode?: boolean;
 }
 
+interface SlackFile {
+  id: string;
+  name?: string;
+  title?: string;
+  mimetype?: string;
+  size?: number;
+  permalink?: string;
+  url_private?: string;
+  thumb_360?: string;
+}
+
 interface SlackMessageChangedEvent {
   channel: string;
-  message?: { ts: string; text?: string; user?: string; bot_id?: string; thread_ts?: string; edited?: unknown };
+  message?: {
+    ts: string;
+    text?: string;
+    user?: string;
+    bot_id?: string;
+    thread_ts?: string;
+    edited?: unknown;
+    files?: SlackFile[];
+  };
+}
+
+/** Map Slack file objects to normalized attachments (links only; files aren't transferred). */
+function toAttachments(files?: SlackFile[]): Attachment[] | undefined {
+  if (!files?.length) return undefined;
+  return files.map((f) => ({
+    id: f.id,
+    name: f.name || f.title || 'file',
+    contentType: f.mimetype || 'application/octet-stream',
+    size: f.size,
+    downloadUrl: f.url_private,
+    permalink: f.permalink,
+    thumbnailUrl: f.thumb_360,
+  }));
 }
 
 interface SlackMessageDeletedEvent {
@@ -115,9 +149,11 @@ export class SlackAdapter implements BridgeAdapter {
         ts: string;
         thread_ts?: string;
         bot_id?: string;
+        files?: SlackFile[];
       };
 
-      if (!messageEvent.user || !messageEvent.text) return;
+      const attachments = toAttachments(messageEvent.files);
+      if (!messageEvent.user || (!messageEvent.text && !attachments)) return;
       if (messageEvent.bot_id) return;
 
       // Resolve user profile
@@ -130,7 +166,8 @@ export class SlackAdapter implements BridgeAdapter {
         sourceMessageId: messageEvent.ts,
         sourceParentId: messageEvent.thread_ts !== messageEvent.ts ? messageEvent.thread_ts : undefined,
         sender,
-        content: messageEvent.text,
+        content: messageEvent.text || '',
+        attachments,
         timestamp: new Date(parseFloat(messageEvent.ts) * 1000),
         rawEvent: event,
       };
@@ -174,6 +211,7 @@ export class SlackAdapter implements BridgeAdapter {
       sourceParentId: edited.thread_ts !== edited.ts ? edited.thread_ts : undefined,
       sender,
       content: edited.text,
+      attachments: toAttachments(edited.files),
       timestamp: new Date(),
       rawEvent: event,
     });

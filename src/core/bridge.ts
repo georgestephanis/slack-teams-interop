@@ -135,6 +135,12 @@ export class BridgeCore extends EventEmitter {
         return;
       }
 
+      // Files are relayed as named links (when syncFiles is on); drop messages left with nothing to say
+      msg = this.withAttachmentLines(msg, mapping);
+      if (!msg.content.trim()) {
+        return;
+      }
+
       const targetAdapter = this.adapters.get(targetPlatform);
       if (!targetAdapter) {
         this.emit('error', new Error(`No adapter registered for target platform: ${targetPlatform}`));
@@ -305,6 +311,15 @@ export class BridgeCore extends EventEmitter {
     }
   }
 
+  /** Fold a message's attachments into its content as `📎` link lines, if the mapping syncs files. */
+  private withAttachmentLines(msg: NormalizedMessage, mapping: ChannelMapping): NormalizedMessage {
+    if (!mapping.options.syncFiles || !msg.attachments?.length) return msg;
+    return {
+      ...msg,
+      content: MessageTranslator.appendAttachmentLines(msg.content, msg.attachments, msg.sourcePlatform),
+    };
+  }
+
   /** Reactions recorded on `platform` for a pair, grouped by emoji in first-seen order. */
   private reactionGroups(pairId: number, platform: Platform): ReactionGroup[] {
     const groups = new Map<string, string[]>();
@@ -353,6 +368,8 @@ export class BridgeCore extends EventEmitter {
 
       const target = this.findMirroredTarget(msg.sourcePlatform, msg.sourceChannelId, msg.sourceMessageId);
       if (!target || !target.mapping.options.syncEdits) return;
+      msg = this.withAttachmentLines(msg, target.mapping);
+      if (!msg.content.trim()) return;
 
       // Only the author's side can edit; ignore edits to the bridge's own mirror copies.
       // Rows recorded before origin tracking have no originPlatform; an edit event from a

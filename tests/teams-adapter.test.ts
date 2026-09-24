@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import { BridgeCore } from '../src/core/bridge.js';
-import { TeamsAdapter } from '../src/adapters/teams/client.js';
+import { TeamsAdapter, teamsAttachments } from '../src/adapters/teams/client.js';
 import { ChannelMapping, NormalizedMessage } from '../src/core/types.js';
 
 const testDbPath = './data/test-teams-adapter.sqlite';
@@ -76,5 +76,30 @@ describe('TeamsAdapter outbound addressing', () => {
     expect(references[0].conversation.id).toBe(`${CHANNEL};messageid=root-123`);
     expect(sent[0].replyToId).toBe('root-123');
     expect(res.messageId).toBe('new-id');
+  });
+});
+
+describe('teamsAttachments', () => {
+  it('keeps files and images, skipping the HTML body copy and cards', () => {
+    const out = teamsAttachments({
+      id: 'msg-1',
+      attachments: [
+        { contentType: 'text/html', content: '<p>hi</p>' },
+        { contentType: 'application/vnd.microsoft.card.adaptive', content: {} },
+        { contentType: 'reference', name: 'Plan.docx', contentUrl: 'https://contoso.sharepoint.com/Plan.docx' },
+        { contentType: 'image/png', contentUrl: 'https://us-api.asm.skype.com/v1/objects/abc/views/imgo' },
+      ],
+    } as any);
+
+    expect(out).toEqual([
+      expect.objectContaining({ name: 'Plan.docx', permalink: 'https://contoso.sharepoint.com/Plan.docx' }),
+      expect.objectContaining({ name: 'image', contentType: 'image/png' }),
+    ]);
+    // Inline images need the bot's token, so there is no link a Slack user could open
+    expect(out?.[1].permalink).toBeUndefined();
+  });
+
+  it('returns undefined when there are no user-visible files', () => {
+    expect(teamsAttachments({ attachments: [{ contentType: 'text/html', content: '' }] } as any)).toBeUndefined();
   });
 });
