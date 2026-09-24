@@ -53,6 +53,15 @@ export interface NormalizedMessage {
   rawEvent?: unknown;
 }
 
+/** Identifies a message on its source platform (used for deletes). */
+export interface NormalizedMessageRef {
+  sourcePlatform: Platform;
+  sourceChannelId: string;
+  sourceMessageId: string;
+  /** Who performed the action, when known */
+  senderId?: string;
+}
+
 export interface NormalizedReaction {
   id: string;
   sourcePlatform: Platform;

@@ -76,6 +76,15 @@ export const migrations: Migration[] = [
       CREATE INDEX idx_tc_updated ON teams_conversations (updated_at);
     `);
   },
+
+  // 3: Track which platform a message was written on (edits/deletes only flow from the origin),
+  // and the Teams thread root for replies (needed to address them when editing/deleting).
+  (db) => {
+    db.exec(`
+      ALTER TABLE message_mappings ADD COLUMN origin_platform TEXT;
+      ALTER TABLE message_mappings ADD COLUMN teams_root_message_id TEXT;
+    `);
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = migrations.length;

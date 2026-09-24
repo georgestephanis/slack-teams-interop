@@ -8,7 +8,14 @@ import { BridgeDatabase } from '../db/index.js';
 import { DeduplicationManager } from './deduplication.js';
 import { ThreadMapper } from './thread-mapper.js';
 import { MessageTranslator } from './translator.js';
-import { ChannelMapping, NormalizedMessage, NormalizedReaction, Platform } from './types.js';
+import { MessageMappingRecord } from '../db/index.js';
+import {
+  ChannelMapping,
+  NormalizedMessage,
+  NormalizedMessageRef,
+  NormalizedReaction,
+  Platform,
+} from './types.js';
 
 export interface BridgeAdapter {
   platform: Platform;
@@ -23,6 +30,32 @@ export interface BridgeAdapter {
     targetMessageId: string,
     reaction: NormalizedReaction
   ): Promise<void>;
+  /** Replace the content of a message the bridge previously posted. */
+  updateMessage?(
+    targetChannelId: string,
+    targetMessageId: string,
+    message: NormalizedMessage,
+    mapping: ChannelMapping,
+    threadRootId?: string
+  ): Promise<void>;
+  /** Delete a message the bridge previously posted. */
+  deleteMessage?(
+    targetChannelId: string,
+    targetMessageId: string,
+    mapping: ChannelMapping,
+    threadRootId?: string
+  ): Promise<void>;
+}
+
+/** Where a message on one platform lives on the other, resolved from a stored ID pair. */
+interface MirroredTarget {
+  mapping: ChannelMapping;
+  pair: MessageMappingRecord;
+  targetPlatform: Platform;
+  targetChannelId: string;
+  targetMessageId: string;
+  /** Teams thread root, when the target is a Teams reply */
+  threadRootId?: string;
 }
 
 export class BridgeCore extends EventEmitter {
@@ -115,6 +148,8 @@ export class BridgeCore extends EventEmitter {
           teamsChannelId: mapping.teams.channelId,
           teamsMessageId: result.messageId,
           isThreadRoot: !msg.sourceParentId,
+          originPlatform: 'slack',
+          teamsRootMessageId: targetParentId,
         });
       } else {
         this.threadMapper.recordMessagePair({
@@ -125,6 +160,8 @@ export class BridgeCore extends EventEmitter {
           teamsChannelId: msg.sourceChannelId,
           teamsMessageId: msg.sourceMessageId,
           isThreadRoot: !msg.sourceParentId,
+          originPlatform: 'teams',
+          teamsRootMessageId: msg.sourceParentId,
         });
       }
 
@@ -177,5 +214,117 @@ export class BridgeCore extends EventEmitter {
     } catch (err) {
       this.emit('error', err);
     }
+  }
+
+  /**
+   * Handle an edit to a message on its origin platform by updating the mirrored copy.
+   */
+  async handleIncomingEdit(msg: NormalizedMessage): Promise<void> {
+    try {
+      if (this.dedup.isBotSender(msg.sourcePlatform, msg.sender.platformId)) {
+        return;
+      }
+
+      const target = this.findMirroredTarget(msg.sourcePlatform, msg.sourceChannelId, msg.sourceMessageId);
+      if (!target || !target.mapping.options.syncEdits) return;
+
+      // Only the author's side can edit; ignore edits to the bridge's own mirror copies.
+      // Rows recorded before origin tracking have no originPlatform; an edit event from a
+      // non-bot sender implies they authored it on this side.
+      if (target.pair.originPlatform && target.pair.originPlatform !== msg.sourcePlatform) return;
+
+      const adapter = this.adapters.get(target.targetPlatform);
+      if (!adapter?.updateMessage) return;
+
+      await adapter.updateMessage(
+        target.targetChannelId,
+        target.targetMessageId,
+        msg,
+        target.mapping,
+        target.threadRootId
+      );
+
+      this.emit('message:edited', {
+        sourcePlatform: msg.sourcePlatform,
+        targetPlatform: target.targetPlatform,
+        sourceMessageId: msg.sourceMessageId,
+        targetMessageId: target.targetMessageId,
+        channel: target.mapping.name,
+      });
+    } catch (err) {
+      this.emit('error', err);
+    }
+  }
+
+  /**
+   * Handle a deletion on the origin platform by deleting the mirrored copy.
+   */
+  async handleIncomingDelete(ref: NormalizedMessageRef): Promise<void> {
+    try {
+      if (ref.senderId && this.dedup.isBotSender(ref.sourcePlatform, ref.senderId)) {
+        return;
+      }
+
+      const target = this.findMirroredTarget(ref.sourcePlatform, ref.sourceChannelId, ref.sourceMessageId);
+      if (!target || !target.mapping.options.syncDeletes) return;
+
+      // Deletes are destructive: only propagate when we know this side is the origin, so that
+      // removing the bridge's mirror copy never deletes the author's original.
+      if (target.pair.originPlatform !== ref.sourcePlatform) return;
+
+      const adapter = this.adapters.get(target.targetPlatform);
+      if (!adapter?.deleteMessage) return;
+
+      await adapter.deleteMessage(target.targetChannelId, target.targetMessageId, target.mapping, target.threadRootId);
+      this.db.deleteMessageMapping(target.pair.id!);
+
+      this.emit('message:deleted', {
+        sourcePlatform: ref.sourcePlatform,
+        targetPlatform: target.targetPlatform,
+        sourceMessageId: ref.sourceMessageId,
+        targetMessageId: target.targetMessageId,
+        channel: target.mapping.name,
+      });
+    } catch (err) {
+      this.emit('error', err);
+    }
+  }
+
+  /**
+   * Resolve the mirrored copy of a source message via its enabled mapping and stored ID pair.
+   */
+  private findMirroredTarget(
+    sourcePlatform: Platform,
+    sourceChannelId: string,
+    sourceMessageId: string
+  ): MirroredTarget | null {
+    if (sourcePlatform === 'slack') {
+      const mapping = this.db.findMappingBySlackChannel(sourceChannelId);
+      const pair = this.threadMapper.findBySlack(sourceChannelId, sourceMessageId);
+      if (!mapping || !mapping.enabled || !pair) return null;
+      return {
+        mapping,
+        pair,
+        targetPlatform: 'teams',
+        targetChannelId: mapping.teams.channelId,
+        targetMessageId: pair.teamsMessageId,
+        threadRootId: pair.teamsRootMessageId,
+      };
+    }
+
+    if (sourcePlatform === 'teams') {
+      const mapping = this.db.findMappingByTeamsChannel(sourceChannelId);
+      const pair = this.threadMapper.findByTeams(sourceChannelId, sourceMessageId);
+      if (!mapping || !mapping.enabled || !pair) return null;
+      return {
+        mapping,
+        pair,
+        targetPlatform: 'slack',
+        targetChannelId: mapping.slack.channelId,
+        targetMessageId: pair.slackMessageTs,
+      };
+    }
+
+    return null;
   }
 }

@@ -9,6 +9,7 @@ import {
   CardFactory,
   CloudAdapter,
   ConfigurationBotFrameworkAuthentication,
+  ConversationReference,
   MessageFactory,
   TeamsActivityHandler,
   TurnContext,
@@ -120,7 +121,46 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
       await next();
     });
 
-    // 2. Reactions
+    // 2. Edits and (soft) deletes of channel messages
+    this.onTeamsMessageEditEvent(async (context: TurnContext, next) => {
+      const activity = context.activity;
+      const text = activity.text?.trim() || '';
+      if (activity.id && text) {
+        const teamsChannelId = this.channelIdOf(activity);
+        await this.bridge.handleIncomingEdit({
+          id: `teams-edit-${teamsChannelId}-${activity.id}`,
+          sourcePlatform: 'teams',
+          sourceChannelId: teamsChannelId,
+          sourceTeamId: activity.channelData?.team?.id,
+          sourceMessageId: activity.id,
+          sourceParentId: activity.replyToId,
+          sender: {
+            platformId: activity.from?.id || 'unknown',
+            displayName: activity.from?.name || 'Teams User',
+            platform: 'teams',
+          },
+          content: text,
+          timestamp: new Date(),
+          rawEvent: activity,
+        });
+      }
+      await next();
+    });
+
+    this.onTeamsMessageSoftDeleteEvent(async (context: TurnContext, next) => {
+      const activity = context.activity;
+      if (activity.id) {
+        await this.bridge.handleIncomingDelete({
+          sourcePlatform: 'teams',
+          sourceChannelId: this.channelIdOf(activity),
+          sourceMessageId: activity.id,
+          senderId: activity.from?.id,
+        });
+      }
+      await next();
+    });
+
+    // 3. Reactions
     this.onReactionsAdded(async (context: TurnContext, next) => {
       const activity = context.activity;
       const teamsChannelId = activity.channelData?.channel?.id || activity.conversation?.id;
@@ -206,39 +246,19 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
     mapping: ChannelMapping,
     parentMessageId?: string
   ): Promise<{ messageId: string }> {
-    let activity: Partial<Activity>;
-
-    if (mapping.options.teamsFormatStyle === 'adaptive_card') {
-      const cardPayload = MessageTranslator.formatForTeamsAdaptiveCard(message.sender, message.content);
-      activity = MessageFactory.attachment(CardFactory.adaptiveCard(cardPayload));
-    } else {
-      const formattedText = MessageTranslator.formatForTeamsMarkdown(message.sender, message.content);
-      activity = MessageFactory.text(formattedText);
-    }
+    const activity = this.buildActivity(message, mapping);
 
     if (parentMessageId) {
       activity.replyToId = parentMessageId;
     }
 
-    const serviceUrl = this.resolveServiceUrl(targetChannelId, mapping.teams.teamId);
-
-    // Construct conversation reference for proactive channel posting
-    const conversationReference = {
-      channelId: 'msteams',
-      serviceUrl,
-      conversation: {
-        id: targetChannelId,
-        isGroup: true,
-        conversationType: 'channel',
-        name: '',
-      },
-    };
+    const conversationReference = this.conversationReference(targetChannelId, mapping);
 
     let sentMessageId = '';
 
     await this.adapter.continueConversationAsync(
       this.botAppId,
-      conversationReference as any,
+      conversationReference,
       async (turnContext) => {
         const response = await turnContext.sendActivity(activity);
         if (response?.id) {
@@ -248,6 +268,83 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
     );
 
     return { messageId: sentMessageId || `${Date.now()}` };
+  }
+
+  /**
+   * Update a message the bridge posted to Teams (the Slack original was edited).
+   */
+  async updateMessage(
+    targetChannelId: string,
+    targetMessageId: string,
+    message: NormalizedMessage,
+    mapping: ChannelMapping,
+    threadRootId?: string
+  ): Promise<void> {
+    const activity = this.buildActivity(message, mapping);
+    activity.id = targetMessageId;
+
+    await this.adapter.continueConversationAsync(
+      this.botAppId,
+      this.conversationReference(targetChannelId, mapping, threadRootId ?? targetMessageId),
+      async (turnContext) => {
+        await turnContext.updateActivity(activity);
+      }
+    );
+  }
+
+  /**
+   * Delete a message the bridge posted to Teams (the Slack original was deleted).
+   */
+  async deleteMessage(
+    targetChannelId: string,
+    targetMessageId: string,
+    mapping: ChannelMapping,
+    threadRootId?: string
+  ): Promise<void> {
+    await this.adapter.continueConversationAsync(
+      this.botAppId,
+      this.conversationReference(targetChannelId, mapping, threadRootId ?? targetMessageId),
+      async (turnContext) => {
+        await turnContext.deleteActivity(targetMessageId);
+      }
+    );
+  }
+
+  /**
+   * Build the outbound Teams activity for a relayed Slack message, per the mapping's display style.
+   */
+  private buildActivity(message: NormalizedMessage, mapping: ChannelMapping): Partial<Activity> {
+    if (mapping.options.teamsFormatStyle === 'adaptive_card') {
+      const cardPayload = MessageTranslator.formatForTeamsAdaptiveCard(message.sender, message.content);
+      return MessageFactory.attachment(CardFactory.adaptiveCard(cardPayload));
+    }
+    return MessageFactory.text(MessageTranslator.formatForTeamsMarkdown(message.sender, message.content));
+  }
+
+  /**
+   * Conversation reference for proactive calls into a channel. Passing a thread root addresses
+   * that thread (`<channelId>;messageid=<rootId>`), which Teams uses for per-message operations.
+   */
+  private conversationReference(
+    channelId: string,
+    mapping: ChannelMapping,
+    threadRootId?: string
+  ): Partial<ConversationReference> {
+    return {
+      channelId: 'msteams',
+      serviceUrl: this.resolveServiceUrl(channelId, mapping.teams.teamId),
+      conversation: {
+        id: threadRootId ? `${channelId};messageid=${threadRootId}` : channelId,
+        isGroup: true,
+        conversationType: 'channel',
+        name: '',
+      },
+    } as Partial<ConversationReference>;
+  }
+
+  /** Channel id of an activity, without any `;messageid=` thread suffix. */
+  private channelIdOf(activity: Partial<Activity>): string {
+    return activity.channelData?.channel?.id || (activity.conversation?.id || '').split(';')[0];
   }
 
   /**

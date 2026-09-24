@@ -6,7 +6,7 @@
 import Database, { Database as DatabaseType } from 'better-sqlite3';
 import path from 'node:path';
 import fs from 'node:fs';
-import { ChannelMapping, DEFAULT_MAPPING_OPTIONS } from '../core/types.js';
+import { ChannelMapping, DEFAULT_MAPPING_OPTIONS, Platform } from '../core/types.js';
 import { runMigrations } from './migrations.js';
 
 export interface MessageMappingRecord {
@@ -18,6 +18,10 @@ export interface MessageMappingRecord {
   teamsChannelId: string;
   teamsMessageId: string;
   isThreadRoot: boolean;
+  /** Platform the message was originally written on (null for rows recorded before migration 3) */
+  originPlatform?: Platform;
+  /** Teams message id of the thread root, when the Teams side of this pair is a reply */
+  teamsRootMessageId?: string;
   createdAt?: string;
 }
 
@@ -132,8 +136,9 @@ export class BridgeDatabase {
     const stmt = this.db.prepare(`
       INSERT INTO message_mappings (
         mapping_id, slack_channel_id, slack_message_ts,
-        teams_team_id, teams_channel_id, teams_message_id, is_thread_root
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        teams_team_id, teams_channel_id, teams_message_id, is_thread_root,
+        origin_platform, teams_root_message_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -143,8 +148,14 @@ export class BridgeDatabase {
       record.teamsTeamId,
       record.teamsChannelId,
       record.teamsMessageId,
-      record.isThreadRoot ? 1 : 0
+      record.isThreadRoot ? 1 : 0,
+      record.originPlatform || null,
+      record.teamsRootMessageId || null
     );
+  }
+
+  deleteMessageMapping(id: number): void {
+    this.db.prepare('DELETE FROM message_mappings WHERE id = ?').run(id);
   }
 
   findBySlackMessage(slackChannelId: string, slackMessageTs: string): MessageMappingRecord | null {
@@ -177,6 +188,8 @@ export class BridgeDatabase {
       teamsChannelId: r.teams_channel_id as string,
       teamsMessageId: r.teams_message_id as string,
       isThreadRoot: Boolean(r.is_thread_root),
+      originPlatform: (r.origin_platform as Platform) || undefined,
+      teamsRootMessageId: (r.teams_root_message_id as string) || undefined,
       createdAt: r.created_at as string,
     };
   }

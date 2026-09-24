@@ -23,6 +23,17 @@ export interface SlackAdapterConfig {
   useSocketMode?: boolean;
 }
 
+interface SlackMessageChangedEvent {
+  channel: string;
+  message?: { ts: string; text?: string; user?: string; bot_id?: string; thread_ts?: string; edited?: unknown };
+}
+
+interface SlackMessageDeletedEvent {
+  channel: string;
+  deleted_ts: string;
+  previous_message?: { user?: string; bot_id?: string };
+}
+
 export class SlackAdapter implements BridgeAdapter {
   public platform: Platform = 'slack';
   public app: App;
@@ -71,15 +82,29 @@ export class SlackAdapter implements BridgeAdapter {
   private setupEventListeners(): void {
     // 1. Listen for new messages in channels
     this.app.event('message', async ({ event }) => {
-      // Ignore edits, deletions, joins, and bot echoes
-      if (
-        'subtype' in event &&
-        (event.subtype === 'message_changed' ||
-          event.subtype === 'message_deleted' ||
-          event.subtype === 'channel_join' ||
-          event.subtype === 'channel_leave' ||
-          event.subtype === 'bot_message')
-      ) {
+      const subtype = 'subtype' in event ? event.subtype : undefined;
+
+      // Edits: only relay real user edits (unfurls and bridge chat.update calls also fire message_changed)
+      if (subtype === 'message_changed') {
+        await this.handleMessageChanged(event as unknown as SlackMessageChangedEvent);
+        return;
+      }
+
+      if (subtype === 'message_deleted') {
+        const deleted = event as unknown as SlackMessageDeletedEvent;
+        // A deleted bridge post (e.g. removed by a Slack admin) must not delete the Teams original
+        if (deleted.previous_message?.bot_id) return;
+        await this.bridge.handleIncomingDelete({
+          sourcePlatform: 'slack',
+          sourceChannelId: deleted.channel,
+          sourceMessageId: deleted.deleted_ts,
+          senderId: deleted.previous_message?.user,
+        });
+        return;
+      }
+
+      // Ignore joins and bot echoes
+      if (subtype === 'channel_join' || subtype === 'channel_leave' || subtype === 'bot_message') {
         return;
       }
 
@@ -129,6 +154,24 @@ export class SlackAdapter implements BridgeAdapter {
       };
 
       await this.bridge.handleIncomingReaction(normalizedReaction);
+    });
+  }
+
+  private async handleMessageChanged(event: SlackMessageChangedEvent): Promise<void> {
+    const edited = event.message;
+    if (!edited?.user || !edited.edited || edited.bot_id || edited.text === undefined) return;
+
+    const sender = await this.resolveUserInfo(edited.user);
+    await this.bridge.handleIncomingEdit({
+      id: `slack-edit-${event.channel}-${edited.ts}`,
+      sourcePlatform: 'slack',
+      sourceChannelId: event.channel,
+      sourceMessageId: edited.ts,
+      sourceParentId: edited.thread_ts !== edited.ts ? edited.thread_ts : undefined,
+      sender,
+      content: edited.text,
+      timestamp: new Date(),
+      rawEvent: event,
     });
   }
 
@@ -202,6 +245,30 @@ export class SlackAdapter implements BridgeAdapter {
   }
 
   /**
+   * Update a message the bridge posted to Slack (the Teams original was edited).
+   * chat.update keeps the original username/icon override.
+   */
+  async updateMessage(targetChannelId: string, targetMessageId: string, message: NormalizedMessage): Promise<void> {
+    await this.client.chat.update({
+      channel: targetChannelId,
+      ts: targetMessageId,
+      text: MessageTranslator.teamsToSlack(message.content),
+    });
+  }
+
+  /**
+   * Delete a message the bridge posted to Slack (the Teams original was deleted).
+   */
+  async deleteMessage(targetChannelId: string, targetMessageId: string): Promise<void> {
+    try {
+      await this.client.chat.delete({ channel: targetChannelId, ts: targetMessageId });
+    } catch (err: unknown) {
+      if (slackErrorCode(err) === 'message_not_found') return;
+      throw err;
+    }
+  }
+
+  /**
    * Mirror a reaction onto a Slack message.
    */
   async sendReaction(
@@ -223,11 +290,16 @@ export class SlackAdapter implements BridgeAdapter {
       });
     } catch (err: unknown) {
       // Ignore already_reacted error
-      if (typeof err === 'object' && err !== null && 'data' in err) {
-        const slackErr = err as { data?: { error?: string } };
-        if (slackErr.data?.error === 'already_reacted') return;
-      }
+      if (slackErrorCode(err) === 'already_reacted') return;
       throw err;
     }
   }
+}
+
+/** Extract the Slack Web API error code (e.g. `already_reacted`) from a thrown error, if any. */
+function slackErrorCode(err: unknown): string | undefined {
+  if (typeof err === 'object' && err !== null && 'data' in err) {
+    return (err as { data?: { error?: string } }).data?.error;
+  }
+  return undefined;
 }
