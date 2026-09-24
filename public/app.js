@@ -167,7 +167,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <td><span class="channel-tag slack"># ${escapeHtml(slackDisplay)}</span></td>
             <td>
               <span class="channel-tag teams">T ${escapeHtml(teamsDisplay)}</span>
-              ${m.status && !m.status.teamsServiceUrlKnown ? '<small class="warn-note" title="No activity seen from this Teams channel yet; posts use TEAMS_SERVICE_URL until one arrives.">⚠ region not yet detected</small>' : ''}
+              ${m.status && !m.status.teamsServiceUrlKnown ? '<small class="warn-note" title="No activity seen from this Teams channel yet. Posts use a service URL learned from the same team or tenant if one is known, otherwise TEAMS_SERVICE_URL.">⚠ region not yet detected</small>' : ''}
             </td>
             <td><span class="badge">${formatBadge}</span></td>
             <td><small>${features.join(' • ')}</small></td>

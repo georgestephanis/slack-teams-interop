@@ -223,9 +223,9 @@ export class BridgeDatabase {
     if (teamId) {
       const team = this.db
         .prepare(
-          'SELECT service_url FROM teams_conversations WHERE team_id = ? OR conversation_id = ? ORDER BY updated_at DESC LIMIT 1'
+          'SELECT service_url FROM teams_conversations WHERE team_id = ? ORDER BY updated_at DESC LIMIT 1'
         )
-        .get(teamId, teamId) as { service_url: string } | undefined;
+        .get(teamId) as { service_url: string } | undefined;
       if (team) return team.service_url;
     }
 
@@ -239,6 +239,14 @@ export class BridgeDatabase {
     return Boolean(
       this.db.prepare('SELECT 1 FROM teams_conversations WHERE conversation_id = ?').get(conversationId)
     );
+  }
+
+  /** All conversation ids with a recorded service URL (one query, for listing many mappings). */
+  getKnownTeamsConversationIds(): Set<string> {
+    const rows = this.db.prepare('SELECT conversation_id FROM teams_conversations').all() as {
+      conversation_id: string;
+    }[];
+    return new Set(rows.map((r) => r.conversation_id));
   }
 
   // --- User Cache Methods ---
