@@ -37,12 +37,26 @@ describe('Teams app type', () => {
     ['MultiTenant', undefined],
   ] as const)('%s bots fetch attachment tokens from the right tenant', async (appType, expectedTenant) => {
     const bridge = new BridgeCore(dbPath);
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(Buffer.from('png'))));
-    const adapter = new TeamsAdapter({ appId: 'app', appPassword: 'pw', appTenantId: 'tenant-guid', appType }, bridge);
+    try {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(Buffer.from('png'))));
+      const adapter = new TeamsAdapter({ appId: 'app', appPassword: 'pw', appTenantId: 'tenant-guid', appType }, bridge);
 
-    await adapter.downloadAttachment(IMAGE);
+      await adapter.downloadAttachment(IMAGE);
 
-    expect(credentialArgs[0]).toEqual(['app', 'pw', expectedTenant]);
-    bridge.db.close();
+      expect(credentialArgs[0]).toEqual(['app', 'pw', expectedTenant]);
+    } finally {
+      bridge.db.close();
+    }
+  });
+
+  it('rejects a SingleTenant config without a tenant ID', () => {
+    const bridge = new BridgeCore(dbPath);
+    try {
+      expect(() => new TeamsAdapter({ appId: 'app', appPassword: 'pw', appType: 'SingleTenant' }, bridge)).toThrow(
+        /require a tenant ID/
+      );
+    } finally {
+      bridge.db.close();
+    }
   });
 });
