@@ -1,5 +1,7 @@
 # Walkthrough: Self-Hosted Slack <-> Microsoft Teams Channel Bridge
 
+> **Historical record.** This describes the initial build (the first commit, 20 tests). A lot has changed since: admin authentication, edits and deletes, reaction mirroring, image transfer, sender notices, schema migrations, Slack HTTP mode, and single-tenant bots. For the current system, see the [README](../README.md), the [setup guide](setup_guide.md), and [AGENTS.md](../AGENTS.md).
+
 We have designed, investigated, and implemented **InterBridge**, a self-hosted, enterprise-ready service that links Slack and Microsoft Teams for shared channels with two-way messaging, threading, reactions, and file support.
 
 ---

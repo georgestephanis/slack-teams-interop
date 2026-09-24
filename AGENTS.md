@@ -6,12 +6,12 @@ Guidance for coding agents working in this repository.
 
 InterBridge is a self-hosted, two-way bridge between Slack channels and Microsoft Teams channels. It is a single Node.js service with four parts:
 
-- A Slack adapter (Bolt, Socket Mode).
+- A Slack adapter (Bolt, Socket Mode by default, or the HTTP Events API).
 - A Teams adapter (Bot Framework SDK v4, Resource-Specific Consent).
-- A SQLite store for channel mappings, message ID pairs, and a user profile cache.
-- An Express server that hosts the Teams webhook, a small admin REST API, and a static dashboard.
+- A SQLite store (versioned migrations) for channel mappings, message pairs (including stored message text), reactions, Teams service URLs, and a user profile cache.
+- An Express server that hosts the Teams webhook, the Slack Events endpoint (HTTP mode), a signed Slack image proxy, a small admin REST API, and a static dashboard.
 
-Human-facing docs live in `README.md` and `docs/`. `docs/implementation_plan.md` records the original design reasoning.
+Human-facing docs: `README.md`, `SECURITY.md` (permissions, stored data, network surface), and `docs/setup_guide.md` (including the full environment variable table). `docs/implementation_plan.md` and `docs/walkthrough.md` are historical. **When a change affects setup, permissions, stored data, or public endpoints, update those docs in the same PR.**
 
 ## Commands
 
@@ -40,6 +40,7 @@ With no `SLACK_BOT_TOKEN` or `TEAMS_APP_ID` set, the service boots in API-only m
 | `src/core/bridge.ts` | `BridgeCore` and the `BridgeAdapter` interface. All routing decisions: bot/echo filtering, mapping lookup, thread parent resolution, recording message ID pairs. |
 | `src/core/types.ts` | Platform-neutral `NormalizedMessage`, `NormalizedReaction`, `ChannelMapping`. |
 | `src/core/translator.ts` | Slack mrkdwn ⇄ Teams Markdown/HTML, plus Teams message formatting (plain header or Adaptive Card). |
+| `src/core/media.ts` | `MediaSigner` (HMAC-signed `/media/slack/<token>` URLs) and the shared `MAX_TRANSFER_BYTES` limit. |
 | `src/core/deduplication.ts` | Loop prevention: known bot IDs plus an LRU echo cache. |
 | `src/core/thread-mapper.ts` | Thin wrapper over DB lookups that map Slack `ts` ⇄ Teams message IDs. |
 | `src/db/index.ts` | `better-sqlite3` wrapper; runs migrations on open. |
@@ -47,7 +48,7 @@ With no `SLACK_BOT_TOKEN` or `TEAMS_APP_ID` set, the service boots in API-only m
 | `src/adapters/slack/client.ts` | Slack events → `NormalizedMessage`/`NormalizedReaction`; posts with `chat:write.customize` so the sender's name and avatar show. |
 | `src/adapters/teams/client.ts` | `TeamsActivityHandler` subclass; posts proactively via `continueConversationAsync`. |
 | `src/adapters/matrix/types.ts` | Matrix event converters only. **Not wired into the running service.** |
-| `src/web/server.ts` | Express app: `/api/messages` (Teams webhook), `/api/*` admin routes, manifest generators, static `public/`. |
+| `src/web/server.ts` | Express app. Public: `/api/messages` (Teams webhook), `/slack/events` (HTTP mode), `/media/slack/:token`, `/api/health/live`. Behind admin auth: the `/api/*` routes, manifest generators, and the static `public/` dashboard. |
 | `public/` | Vanilla JS/CSS dashboard (no build step) plus the prebuilt `teams-app.zip`. |
 | `manifests/` | Source Slack and Teams app manifests. |
 | `tests/` | Vitest specs. `bridge.test.ts` is an end-to-end routing test with mock adapters. |
@@ -58,10 +59,12 @@ With no `SLACK_BOT_TOKEN` or `TEAMS_APP_ID` set, the service boots in API-only m
 2. `BridgeCore.handleIncomingMessage` then:
    1. Drops messages from known bot IDs, then echoes of messages the bridge posted.
    2. Finds the enabled mapping for the source channel.
-   3. Resolves the thread parent on the other platform, if `syncThreads` is on.
-   4. Calls `targetAdapter.sendMessage(...)`.
-   5. Marks the result for echo suppression and stores the Slack⇄Teams ID pair in `message_mappings`.
-3. Reactions follow the same pattern via `handleIncomingReaction`. They only mirror onto messages that have a stored ID pair.
+   3. Decides how attachments travel (`prepareAttachments`: images transfer, other files become `📎` lines) and collects any problems to tell the sender about.
+   4. Resolves the thread parent on the other platform, if `syncThreads` is on.
+   5. Calls `targetAdapter.sendMessage(...)`.
+   6. Marks the result for echo suppression and stores the pair in `message_mappings`: IDs, origin platform, Teams thread root, content, sender, and attachment metadata.
+   7. Sends a sender notice if anything didn't make it across.
+3. Edits (`handleIncomingEdit`), deletes (`handleIncomingDelete`) and reactions (`handleIncomingReaction`) look up the stored pair and act on the mirrored copy. Nothing happens for messages without a pair (for example, messages older than `MESSAGE_RETENTION_DAYS`).
 4. Failures inside `BridgeCore` are reported by emitting `'error'`, never thrown to the adapter.
 
 Routing is hardcoded as a Slack⇄Teams pair in `bridge.ts`. A third platform needs changes there, not just a new adapter.
@@ -80,11 +83,12 @@ Routing is hardcoded as a Slack⇄Teams pair in `bridge.ts`. A third platform ne
 - **Teams per-message operations address the thread.** `updateActivity`/`deleteActivity` use the conversation id `<channelId>;messageid=<rootId>` (the message's own id for roots). The root is stored in `message_mappings.teams_root_message_id`.
 - **Schema changes go through migrations.** `src/db/migrations.ts` is an append-only list tracked with `PRAGMA user_version`. Add a new migration; never edit or reorder a shipped one. The DB refuses to open if its version is newer than the code, and it writes `<db>.bak-v<N>` before upgrading an existing database. New `ChannelMapping.options` keys also need a default in `DEFAULT_MAPPING_OPTIONS` (`src/core/types.ts`), because stored mappings won't have them.
 - **Teams `serviceUrl` is persisted** in `teams_conversations`, recorded from every inbound activity (`onTurn`). Lookup order is: exact channel, then same team, then most recently seen, then `TEAMS_SERVICE_URL`. When debugging region-specific (EMEA/APAC) failures, check that table first.
+- **Teams auth type must match the Azure registration.** `TEAMS_APP_TYPE` (`SingleTenant` for bots created since July 2025, `MultiTenant` for older ones) is passed to `ConfigurationBotFrameworkAuthentication`, and to `MicrosoftAppCredentials` as the tenant for attachment downloads. Keep both in sync if you add another place that gets a token.
 - **Teams addresses the bot as `28:<appId>`**, not just the bare app ID. Account for both forms when comparing sender IDs or registering bot IDs.
 - **`/api/messages` is authenticated by the Bot Framework adapter** (it validates Azure-issued JWTs). It must stay reachable without admin credentials, as must `/slack/events` (verified by Slack's signing secret). All other management endpoints (`/api/mappings`, etc.) and the dashboard require admin auth. When modifying routing, ensure `/api/messages` and liveness probes stay exempt from basic auth.
 - **Dashboard HTML is built with template strings.** Pass every server-supplied value through `escapeHtml()` in `public/app.js`, including values in attributes.
-- **Tests write real SQLite files** under `./data/` and delete them in `afterEach`. Use a unique filename per spec file so parallel runs don't collide.
-- **`public/teams-app.zip` is committed and served** by `/api/manifests/teams`. Run `npm run package:teams` after editing `manifests/teams/`. The manifest's `botId` is a placeholder the operator must replace.
+- **Tests write real SQLite files** under `./data/`. Use a unique filename per spec file so parallel runs don't collide, and delete the file *and its `-wal`/`-shm`/`.bak-v*` siblings* before and after (see `removeDb` in the newer tests). A DB left behind by a branch with a newer schema trips the migration "newer than this build" guard.
+- **`public/teams-app.zip` is committed and served** by `/api/manifests/teams`. Run `npm run package:teams` after editing `manifests/teams/`. The manifest's `botId` is a placeholder the operator must replace, so the committed zip (and the dashboard download) won't install as-is.
 - **Slack HTTP (Events API) mode** mounts Bolt's `ExpressReceiver` router (`SlackAdapter.httpRouter`) on the shared server at `/slack/events`, **before** `express.json()` (signature verification needs the raw body) and before admin auth. In that mode `app.start()` is skipped, because it would open Bolt's own listener on port 3000.
 
 ## Conventions
