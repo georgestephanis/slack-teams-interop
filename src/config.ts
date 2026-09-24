@@ -34,10 +34,17 @@ const envSchema = z.object({
   TEAMS_APP_ID: z.string().optional(),
   TEAMS_APP_PASSWORD: z.string().optional(),
   TEAMS_TENANT_ID: z.string().optional(),
+  // Azure Bot registration type. New bots are SingleTenant; MultiTenant is kept for older registrations.
+  TEAMS_APP_TYPE: z.enum(['SingleTenant', 'MultiTenant']).default('MultiTenant'),
   TEAMS_SERVICE_URL: z.string().default('https://smba.trafficmanager.net/amer/'),
 
   // Admin UI
   ADMIN_PASSWORD: z.string().min(1, 'ADMIN_PASSWORD must not be empty').default('admin'),
 });
 
-export const config = envSchema.parse(process.env);
+export const config = envSchema
+  .refine((c) => c.TEAMS_APP_TYPE !== 'SingleTenant' || !c.TEAMS_APP_ID || Boolean(c.TEAMS_TENANT_ID), {
+    message: 'TEAMS_APP_TYPE=SingleTenant requires TEAMS_TENANT_ID',
+    path: ['TEAMS_TENANT_ID'],
+  })
+  .parse(process.env);

@@ -2,6 +2,7 @@
   "name": "slack-teams-interop",
   "version": "1.0.0",
   "description": "",
+  "license": "AGPL-3.0-or-later",
   "main": "index.js",
   "directories": {
     "doc": "docs"

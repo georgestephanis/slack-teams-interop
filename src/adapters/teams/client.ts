@@ -32,6 +32,11 @@ export interface TeamsAdapterConfig {
   appId: string;
   appPassword?: string;
   appTenantId?: string;
+  /**
+   * Azure Bot registration type. New registrations must be SingleTenant (Microsoft stopped
+   * creating multi-tenant bots after July 2025); SingleTenant requires appTenantId.
+   */
+  appType?: 'SingleTenant' | 'MultiTenant';
   serviceUrl?: string; // Default Azure Bot service URL: https://smba.trafficmanager.net/amer/
 }
 
@@ -54,11 +59,15 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
       this.bridge.dedup.registerBotId('teams', this.botAppId);
     }
 
+    if (config.appType === 'SingleTenant' && !config.appTenantId) {
+      throw new Error('Teams SingleTenant bots require a tenant ID (TEAMS_TENANT_ID)');
+    }
+
     const botAuth = new ConfigurationBotFrameworkAuthentication({
       MicrosoftAppId: config.appId,
       MicrosoftAppPassword: config.appPassword,
       MicrosoftAppTenantId: config.appTenantId,
-      MicrosoftAppType: 'MultiTenant',
+      MicrosoftAppType: config.appType ?? 'MultiTenant',
     });
 
     this.adapter = new CloudAdapter(botAuth);
@@ -361,7 +370,12 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
   async downloadAttachment(url: string): Promise<Buffer> {
     if (!isTeamsAttachmentHost(url)) throw new Error('refusing to send bot credentials to a non-Teams host');
 
-    const credentials = new MicrosoftAppCredentials(this.config.appId, this.config.appPassword || '');
+    // Single-tenant bots get their token from their own tenant rather than botframework.com
+    const credentials = new MicrosoftAppCredentials(
+      this.config.appId,
+      this.config.appPassword || '',
+      this.config.appType === 'SingleTenant' ? this.config.appTenantId : undefined
+    );
     const token = await credentials.getToken();
     const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
     if (!res.ok) throw new Error(`Teams attachment download failed: HTTP ${res.status}`);

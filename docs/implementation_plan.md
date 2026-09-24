@@ -1,5 +1,16 @@
 # Feasibility Investigation & Implementation Plan: Self-Hosted Slack <-> Microsoft Teams Channel Bridge
 
+> **Historical design document**, written before the bridge was built. Option A (the direct bridge) was chosen. As built, the system differs from this plan in several ways:
+> - **Reactions into Teams:** bots can't add Teams reactions, via Bot Framework or the Graph endpoint mentioned below. Slack reactions are shown as a footer on bridge-posted messages, or as an optional thread reply.
+> - **Files:** images transfer; other files are relayed as links. Copying files through SharePoint needs Microsoft Graph with admin consent (see [#24](https://github.com/georgestephanis/slack-teams-interop/issues/24)).
+> - **Loop prevention** uses the message IDs the bridge posted, not content hashes, which dropped legitimate messages.
+> - **Stack:** Express, better-sqlite3 with hand-written migrations (no Drizzle, PostgreSQL, or job queue), and a vanilla JS dashboard. Credentials come from `.env`, not the dashboard.
+> - **Runtime:** Node.js 22+ (not 20).
+> - **Thread replies in Teams** are addressed through the thread's conversation ID (`<channelId>;messageid=<rootId>`) rather than `replyToId` alone.
+> - **Azure:** new bots are **single-tenant**; Azure stopped creating multi-tenant bots in July 2025.
+>
+> For the current system, see the [README](../README.md) and the [setup guide](setup_guide.md).
+
 This document provides a comprehensive analysis of the Slack and Microsoft Teams API ecosystems, evaluates feasibility, investigates the Matrix.org common-bus approach, and outlines the complete technical architecture and user experience plan for a reliable, self-hosted bridging service.
 
 ---

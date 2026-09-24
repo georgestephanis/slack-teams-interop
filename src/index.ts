@@ -80,6 +80,7 @@ async function bootstrap() {
         appId: config.TEAMS_APP_ID,
         appPassword: config.TEAMS_APP_PASSWORD,
         appTenantId: config.TEAMS_TENANT_ID,
+        appType: config.TEAMS_APP_TYPE,
         serviceUrl: config.TEAMS_SERVICE_URL,
       },
       bridge
