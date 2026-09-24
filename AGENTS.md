@@ -25,6 +25,8 @@ npm run package:teams  # rebuild public/teams-app.zip from manifests/teams/
 docker compose up -d   # containerized run, persists to ./data
 ```
 
+Requires Node.js 22+ (`better-sqlite3` and the `@azure/*` packages need it; `.npmrc` sets `engine-strict`).
+
 Before proposing a change, run `npx tsc --noEmit` and `npm test`. Both are fast.
 
 With no `SLACK_BOT_TOKEN` or `TEAMS_APP_ID` set, the service boots in API-only mode. That is enough to exercise the dashboard, the REST API, and the DB. Copy `.env.example` to `.env` for local config. Never commit `.env` or anything under `data/`.
