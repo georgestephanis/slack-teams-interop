@@ -130,7 +130,7 @@ describe('Image routing in BridgeCore', () => {
     await bridge.handleIncomingMessage(teamsMsg([{ id: 'x', name: 'image', contentType: 'image/png' }]));
 
     const sent = vi.mocked(slack.sendMessage).mock.calls[0][1];
-    expect(sent.content).toBe('look\n📎 image (shared in Teams)');
+    expect(sent.content).toBe("look\n📎 image (shared in Teams)\n*Files aren't copied between Slack and Teams.*");
     expect(sent.attachments).toBeUndefined();
   });
 
@@ -159,7 +159,7 @@ describe('Image routing in BridgeCore', () => {
     bridge.db.saveChannelMapping(mapping());
     await bridge.handleIncomingMessage(slackMsg([{ id: 'F1', name: 'cat.png', contentType: 'image/png', permalink: 'https://x/F1' }]));
 
-    expect(vi.mocked(teams.sendMessage).mock.calls[0][1].content).toBe('cat\n📎 <https://x/F1|cat.png> (shared in Slack)');
+    expect(vi.mocked(teams.sendMessage).mock.calls[0][1].content).toBe("cat\n📎 <https://x/F1|cat.png> (shared in Slack)\n_Files aren't copied between Slack and Teams; opening them may require access to Slack._");
   });
 });
 
@@ -223,7 +223,7 @@ describe('SlackAdapter image delivery', () => {
 
     await adapter.sendMessage('C1', message, mapping());
 
-    expect(post.mock.calls[0][0]).toMatchObject({ text: 'look\n📎 shot.png (shared in Teams)' });
+    expect(post.mock.calls[0][0]).toMatchObject({ text: "look\n📎 shot.png (shared in Teams)\n_Files aren't copied between Slack and Teams._" });
     expect(errors[0].message).toContain('shot.png');
   });
 

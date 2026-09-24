@@ -304,7 +304,7 @@ export class SlackAdapter implements BridgeAdapter {
     mapping: ChannelMapping,
     parentMessageId?: string
   ): Promise<SendResult> {
-    const { text, blocks, attachments } = await this.renderMessage(message);
+    const { text, blocks, attachments, undelivered } = await this.renderMessage(message);
 
     const res = await this.postWithBlocks(blocks, text, (withBlocks) =>
       this.client.chat.postMessage({
@@ -321,7 +321,14 @@ export class SlackAdapter implements BridgeAdapter {
       throw new Error(`Slack postMessage failed: missing timestamp in response`);
     }
 
-    return { messageId: res.ts, attachments };
+    return { messageId: res.ts, attachments, undelivered };
+  }
+
+  /**
+   * Tell a Slack user something about their own message, visible only to them.
+   */
+  async notifySender(channelId: string, userId: string, text: string, _mapping: ChannelMapping, threadRootId?: string): Promise<void> {
+    await this.client.chat.postEphemeral({ channel: channelId, user: userId, text, thread_ts: threadRootId });
   }
 
   /**
@@ -347,7 +354,7 @@ export class SlackAdapter implements BridgeAdapter {
    */
   private async renderMessage(
     message: NormalizedMessage
-  ): Promise<{ text: string; blocks?: (KnownBlock | Block)[]; attachments?: Attachment[] }> {
+  ): Promise<{ text: string; blocks?: (KnownBlock | Block)[]; attachments?: Attachment[]; undelivered?: Attachment[] }> {
     let text = MessageTranslator.teamsToSlack(message.content);
     if (!message.attachments?.length) return { text };
 
@@ -366,7 +373,8 @@ export class SlackAdapter implements BridgeAdapter {
     if (failed.length) {
       text = MessageTranslator.teamsToSlack(MessageTranslator.appendAttachmentLines(message.content, failed, 'teams'));
     }
-    if (!delivered.length) return { text };
+    const undelivered = failed.length ? failed : undefined;
+    if (!delivered.length) return { text, undelivered };
 
     const blocks: (KnownBlock | Block)[] = [];
     // Section text is capped at 3000 characters per block
@@ -377,7 +385,7 @@ export class SlackAdapter implements BridgeAdapter {
       blocks.push({ type: 'image', slack_file: { id: a.slackFileId! }, alt_text: a.name, title: { type: 'plain_text', text: a.name } });
     }
 
-    return { text: text || delivered.map((a) => a.name).join(', '), blocks, attachments: delivered };
+    return { text: text || delivered.map((a) => a.name).join(', '), blocks, attachments: delivered, undelivered };
   }
 
   /** Upload an image privately (no channel), for use in image blocks. Returns the Slack file id. */

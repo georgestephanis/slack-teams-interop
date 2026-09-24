@@ -17,6 +17,8 @@ export interface UserIdentity {
   email?: string;
   /** The originating platform */
   platform: Platform;
+  /** True for bots and apps (they never get sender notices) */
+  isBot?: boolean;
 }
 
 export interface Attachment {
@@ -60,6 +62,8 @@ export interface NormalizedMessage {
   sourceParentId?: string;
   /** Attached files or images */
   attachments?: Attachment[];
+  /** Descriptions of content the bridge can't relay (e.g. "an Adaptive Card"), for sender notices */
+  unsupported?: string[];
   /** Message creation timestamp */
   timestamp: Date;
   /** Raw platform payload for specialized adapter processing if needed */
@@ -113,6 +117,8 @@ export interface ChannelMapping {
      * Reactions to bridge-posted Teams messages are always shown as an in-place footer.
      */
     reactionNotices: boolean;
+    /** Tell senders (privately in Slack, as a thread reply in Teams) when part of a message couldn't be relayed */
+    unsupportedNotices: boolean;
   };
   createdAt: string;
   updatedAt: string;
@@ -129,4 +135,5 @@ export const DEFAULT_MAPPING_OPTIONS: ChannelMapping['options'] = {
   syncFiles: false,
   teamsFormatStyle: 'adaptive_card',
   reactionNotices: false,
+  unsupportedNotices: true,
 };

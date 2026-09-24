@@ -104,7 +104,27 @@ export class MessageTranslator {
       return `📎 [${label}](${a.permalink}) (shared in ${where})`;
     });
 
+    const disclaimer = this.fileDisclaimer(attachments, dialect);
+    if (!content.includes(disclaimer)) lines.push(disclaimer);
     return [content.trim(), ...lines].filter(Boolean).join('\n');
+  }
+
+  /** Italic note, in the source dialect, explaining why relayed files may not open. */
+  static fileDisclaimer(attachments: Attachment[], dialect: Platform): string {
+    const where = dialect === 'slack' ? 'Slack' : 'Teams';
+    const text = attachments.some((a) => a.permalink)
+      ? `Files aren't copied between Slack and Teams; opening them may require access to ${where}.`
+      : "Files aren't copied between Slack and Teams.";
+    return dialect === 'slack' ? `_${text}_` : `*${text}*`;
+  }
+
+  /**
+   * Text of a notice telling a sender what didn't make it across. `issues` are full sentences.
+   */
+  static formatSenderNotice(issues: string[], dropped: boolean, targetName: string, senderName?: string): string {
+    const lead = dropped ? `Your message wasn't sent to ${targetName}.` : `Part of your message didn't reach ${targetName} as sent.`;
+    const who = senderName ? `${senderName}: ` : '';
+    return `⚠️ ${who}${lead} ${issues.join(' ')}`;
   }
 
   /** First ~60 characters of a message as plain text, for quoting. */

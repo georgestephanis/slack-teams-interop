@@ -95,7 +95,8 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
 
       const text = activity.text?.trim() || '';
       const attachments = teamsAttachments(activity, (url) => this.downloadAttachment(url));
-      if (!text && !attachments) {
+      const unsupported = teamsUnsupportedContent(activity);
+      if (!text && !attachments && !unsupported) {
         await next();
         return;
       }
@@ -107,6 +108,7 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
         platformId: activity.from?.id || activity.from?.aadObjectId || 'unknown',
         displayName: activity.from?.name || 'Teams User',
         platform: 'teams',
+        isBot: activity.from?.role === 'bot' || Boolean(activity.from?.id?.startsWith('28:')),
       };
 
       const normalized: NormalizedMessage = {
@@ -119,6 +121,7 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
         sender,
         content: text,
         attachments,
+        unsupported,
         timestamp: activity.timestamp ? new Date(activity.timestamp) : new Date(),
         rawEvent: activity,
       };
@@ -393,6 +396,21 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
   }
 
   /**
+   * Tell a Teams user something about their own message. Teams has no private messages in
+   * channels, so this is a reply in the message's thread (the text names the sender).
+   */
+  async notifySender(
+    channelId: string,
+    _userId: string,
+    text: string,
+    mapping: ChannelMapping,
+    threadRootId?: string
+  ): Promise<{ messageId: string }> {
+    if (!threadRootId) throw new Error('Teams sender notices need a thread to reply in');
+    return this.postNotice(channelId, text, mapping, threadRootId);
+  }
+
+  /**
    * Replace the text of a notice posted with postNotice.
    */
   async updateNotice(
@@ -462,6 +480,23 @@ export function isTeamsAttachmentHost(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Describe parts of a Teams message the bridge can't relay (cards, and attachment types it doesn't
+ * recognise), for sender notices. Files, images, and the HTML body copy are handled elsewhere.
+ */
+export function teamsUnsupportedContent(activity: Partial<Activity>): string[] | undefined {
+  const found = new Set<string>();
+  for (const a of activity.attachments || []) {
+    const type = a.contentType || '';
+    if (type === 'text/html' || type === 'reference' || type === 'application/vnd.microsoft.teams.file.download.info') continue;
+    if (type.startsWith('image/')) continue;
+    if (type === 'application/vnd.microsoft.card.adaptive') found.add('Adaptive Cards');
+    else if (type.startsWith('application/vnd.microsoft.card') || type.includes('.card.')) found.add('cards');
+    else found.add(`${type || 'unknown'} attachments`);
+  }
+  return found.size ? [...found] : undefined;
 }
 
 export function teamsAttachments(

@@ -64,7 +64,7 @@ describe('File share notices', () => {
     await bridge.handleIncomingMessage(fileOnly);
 
     const sent = vi.mocked(teams.sendMessage).mock.calls[0][1];
-    expect(sent.content).toBe('📎 <https://x.slack.com/files/U1/F1/report.pdf|report.pdf> (shared in Slack)');
+    expect(sent.content).toBe("📎 <https://x.slack.com/files/U1/F1/report.pdf|report.pdf> (shared in Slack)\n_Files aren't copied between Slack and Teams; opening them may require access to Slack._");
     expect(MessageTranslator.slackToTeams(sent.content)).toContain('[report.pdf](https://x.slack.com/files/U1/F1/report.pdf)');
     // Stored content includes the file line, so footer re-renders keep it
     expect(bridge.db.findBySlackMessage('C1', '1.1')?.sourceContent).toBe(sent.content);
@@ -93,7 +93,7 @@ describe('File share notices', () => {
       ],
       'teams'
     );
-    expect(out).toBe('notes\n📎 [Q3 final.xlsx](https://contoso.sharepoint.com/x) (shared in Teams)\n📎 image (shared in Teams)');
+    expect(out).toBe("notes\n📎 [Q3 final.xlsx](https://contoso.sharepoint.com/x) (shared in Teams)\n📎 image (shared in Teams)\n*Files aren't copied between Slack and Teams; opening them may require access to Teams.*");
     expect(MessageTranslator.teamsToSlack(out)).toContain('<https://contoso.sharepoint.com/x|Q3 final.xlsx>');
   });
 
