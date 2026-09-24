@@ -91,6 +91,8 @@ TEAMS_TENANT_ID=your-microsoft-tenant-id
 TEAMS_SERVICE_URL=https://smba.trafficmanager.net/amer/
 ```
 
+> **About `TEAMS_SERVICE_URL`:** Bot Framework routes proactive posts through a region-specific service URL. The bridge learns the correct URL from the first activity it receives from a team (installing the app counts), and stores it in the database. `TEAMS_SERVICE_URL` is only a fallback for channels it hasn't heard from yet. If your tenant is outside the Americas, set it to your region's endpoint (for example `https://smba.trafficmanager.net/emea/` or `.../apac/`). The dashboard flags mappings whose Teams channel hasn't been seen yet.
+
 ---
 
 ## 5. Running the Service

@@ -37,6 +37,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('sync-threads').checked = true;
     document.getElementById('sync-reactions').checked = true;
     document.getElementById('sync-files').checked = true;
+    document.getElementById('sync-edits').checked = true;
+    document.getElementById('sync-deletes').checked = true;
     modalMapping.classList.remove('hidden');
   });
 
@@ -72,9 +74,10 @@ document.addEventListener('DOMContentLoaded', () => {
         teamsFormatStyle: document.getElementById('teams-format-style').value,
         syncThreads: document.getElementById('sync-threads').checked,
         syncReactions: document.getElementById('sync-reactions').checked,
+        reactionNotices: document.getElementById('reaction-notices').checked,
         syncFiles: document.getElementById('sync-files').checked,
-        syncEdits: true,
-        syncDeletes: true,
+        syncEdits: document.getElementById('sync-edits').checked,
+        syncDeletes: document.getElementById('sync-deletes').checked,
       },
     };
 
@@ -158,14 +161,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const features = [];
         if (m.options.syncThreads) features.push('Threads');
-        if (m.options.syncReactions) features.push('Reactions');
+        if (m.options.syncReactions) features.push(m.options.reactionNotices ? 'Reactions (+notices)' : 'Reactions');
+        if (m.options.syncEdits) features.push('Edits');
+        if (m.options.syncDeletes) features.push('Deletes');
         if (m.options.syncFiles) features.push('Files');
 
         return `
           <tr>
             <td><strong>${escapeHtml(m.name)}</strong></td>
             <td><span class="channel-tag slack"># ${escapeHtml(slackDisplay)}</span></td>
-            <td><span class="channel-tag teams">T ${escapeHtml(teamsDisplay)}</span></td>
+            <td>
+              <span class="channel-tag teams">T ${escapeHtml(teamsDisplay)}</span>
+              ${m.status && !m.status.teamsServiceUrlKnown ? '<small class="warn-note" title="No activity seen from this Teams channel yet; posts use TEAMS_SERVICE_URL until one arrives.">⚠ region not yet detected</small>' : ''}
+            </td>
             <td><span class="badge">${formatBadge}</span></td>
             <td><small>${features.join(' • ')}</small></td>
             <td>

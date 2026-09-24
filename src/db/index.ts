@@ -6,7 +6,8 @@
 import Database, { Database as DatabaseType } from 'better-sqlite3';
 import path from 'node:path';
 import fs from 'node:fs';
-import { ChannelMapping } from '../core/types.js';
+import { ChannelMapping, DEFAULT_MAPPING_OPTIONS, Platform, UserIdentity } from '../core/types.js';
+import { runMigrations } from './migrations.js';
 
 export interface MessageMappingRecord {
   id?: number;
@@ -17,7 +18,22 @@ export interface MessageMappingRecord {
   teamsChannelId: string;
   teamsMessageId: string;
   isThreadRoot: boolean;
+  /** Platform the message was originally written on (null for rows recorded before migration 3) */
+  originPlatform?: Platform;
+  /** Teams message id of the thread root, when the Teams side of this pair is a reply */
+  teamsRootMessageId?: string;
+  /** Original message content and sender, used to re-render mirrored copies (e.g. reaction footers) */
+  sourceContent?: string;
+  sourceSender?: UserIdentity;
+  /** Teams id of the reaction notice posted for this message, if any */
+  teamsNoticeMessageId?: string;
   createdAt?: string;
+}
+
+export interface ReactionRecord {
+  emoji: string;
+  userId: string;
+  userName?: string;
 }
 
 export class BridgeDatabase {
@@ -33,61 +49,7 @@ export class BridgeDatabase {
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
 
-    this.initTables();
-  }
-
-  private initTables(): void {
-    // 1. Channel Mappings
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS channel_mappings (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        enabled INTEGER NOT NULL DEFAULT 1,
-        slack_channel_id TEXT NOT NULL,
-        slack_channel_name TEXT,
-        teams_team_id TEXT NOT NULL,
-        teams_channel_id TEXT NOT NULL,
-        teams_team_name TEXT,
-        teams_channel_name TEXT,
-        options TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-      CREATE INDEX IF NOT EXISTS idx_cm_slack ON channel_mappings (slack_channel_id);
-      CREATE INDEX IF NOT EXISTS idx_cm_teams ON channel_mappings (teams_channel_id);
-    `);
-
-    // 2. Message Mappings (for threading and reaction syncing)
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS message_mappings (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        mapping_id TEXT NOT NULL,
-        slack_channel_id TEXT NOT NULL,
-        slack_message_ts TEXT NOT NULL,
-        teams_team_id TEXT NOT NULL,
-        teams_channel_id TEXT NOT NULL,
-        teams_message_id TEXT NOT NULL,
-        is_thread_root INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        FOREIGN KEY (mapping_id) REFERENCES channel_mappings (id) ON DELETE CASCADE
-      );
-      CREATE INDEX IF NOT EXISTS idx_mm_slack ON message_mappings (slack_channel_id, slack_message_ts);
-      CREATE INDEX IF NOT EXISTS idx_mm_teams ON message_mappings (teams_channel_id, teams_message_id);
-      CREATE INDEX IF NOT EXISTS idx_mm_created ON message_mappings (created_at);
-    `);
-
-    // 3. User Identity Cache
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS user_cache (
-        platform TEXT NOT NULL,
-        platform_id TEXT NOT NULL,
-        display_name TEXT NOT NULL,
-        avatar_url TEXT,
-        email TEXT,
-        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-        PRIMARY KEY (platform, platform_id)
-      );
-    `);
+    runMigrations(this.db, { dbPath });
   }
 
   // --- Channel Mapping Methods ---
@@ -172,7 +134,8 @@ export class BridgeDatabase {
         teamName: (r.teams_team_name as string) || undefined,
         channelName: (r.teams_channel_name as string) || undefined,
       },
-      options: JSON.parse(r.options as string),
+      // Merge over defaults so option keys added after a mapping was saved get sensible values
+      options: { ...DEFAULT_MAPPING_OPTIONS, ...JSON.parse(r.options as string) },
       createdAt: r.created_at as string,
       updatedAt: r.updated_at as string,
     };
@@ -184,8 +147,9 @@ export class BridgeDatabase {
     const stmt = this.db.prepare(`
       INSERT INTO message_mappings (
         mapping_id, slack_channel_id, slack_message_ts,
-        teams_team_id, teams_channel_id, teams_message_id, is_thread_root
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        teams_team_id, teams_channel_id, teams_message_id, is_thread_root,
+        origin_platform, teams_root_message_id, source_content, source_sender
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -195,8 +159,63 @@ export class BridgeDatabase {
       record.teamsTeamId,
       record.teamsChannelId,
       record.teamsMessageId,
-      record.isThreadRoot ? 1 : 0
+      record.isThreadRoot ? 1 : 0,
+      record.originPlatform || null,
+      record.teamsRootMessageId || null,
+      record.sourceContent ?? null,
+      record.sourceSender ? JSON.stringify(record.sourceSender) : null
     );
+  }
+
+  updateMessageContent(id: number, content: string): void {
+    this.db.prepare('UPDATE message_mappings SET source_content = ? WHERE id = ?').run(content, id);
+  }
+
+  setTeamsNoticeMessageId(id: number, noticeId: string | null): void {
+    this.db.prepare('UPDATE message_mappings SET teams_notice_message_id = ? WHERE id = ?').run(noticeId, id);
+  }
+
+  // --- Reaction Methods ---
+
+  /** Record a user's reaction. Returns false if it was already recorded. */
+  addReaction(messageMappingId: number, platform: Platform, emoji: string, userId: string, userName?: string): boolean {
+    const res = this.db
+      .prepare(
+        `INSERT OR IGNORE INTO reactions (message_mapping_id, platform, emoji, user_id, user_name)
+         VALUES (?, ?, ?, ?, ?)`
+      )
+      .run(messageMappingId, platform, emoji, userId, userName || null);
+    return res.changes > 0;
+  }
+
+  /** Remove a user's reaction. Returns false if it wasn't recorded. */
+  removeReaction(messageMappingId: number, platform: Platform, emoji: string, userId: string): boolean {
+    const res = this.db
+      .prepare('DELETE FROM reactions WHERE message_mapping_id = ? AND platform = ? AND emoji = ? AND user_id = ?')
+      .run(messageMappingId, platform, emoji, userId);
+    return res.changes > 0;
+  }
+
+  countReactions(messageMappingId: number, platform: Platform, emoji: string): number {
+    const row = this.db
+      .prepare('SELECT COUNT(*) AS n FROM reactions WHERE message_mapping_id = ? AND platform = ? AND emoji = ?')
+      .get(messageMappingId, platform, emoji) as { n: number };
+    return row.n;
+  }
+
+  /** Reactions made on `platform` to a message pair, oldest first. */
+  listReactions(messageMappingId: number, platform: Platform): ReactionRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT emoji, user_id, user_name FROM reactions
+         WHERE message_mapping_id = ? AND platform = ? ORDER BY created_at, rowid`
+      )
+      .all(messageMappingId, platform) as { emoji: string; user_id: string; user_name: string | null }[];
+    return rows.map((r) => ({ emoji: r.emoji, userId: r.user_id, userName: r.user_name || undefined }));
+  }
+
+  deleteMessageMapping(id: number): void {
+    this.db.prepare('DELETE FROM message_mappings WHERE id = ?').run(id);
   }
 
   findBySlackMessage(slackChannelId: string, slackMessageTs: string): MessageMappingRecord | null {
@@ -229,6 +248,11 @@ export class BridgeDatabase {
       teamsChannelId: r.teams_channel_id as string,
       teamsMessageId: r.teams_message_id as string,
       isThreadRoot: Boolean(r.is_thread_root),
+      originPlatform: (r.origin_platform as Platform) || undefined,
+      teamsRootMessageId: (r.teams_root_message_id as string) || undefined,
+      sourceContent: (r.source_content as string | null) ?? undefined,
+      sourceSender: r.source_sender ? (JSON.parse(r.source_sender as string) as UserIdentity) : undefined,
+      teamsNoticeMessageId: (r.teams_notice_message_id as string) || undefined,
       createdAt: r.created_at as string,
     };
   }
@@ -243,6 +267,54 @@ export class BridgeDatabase {
     `);
     const res = stmt.run(daysToKeep);
     return res.changes;
+  }
+
+  // --- Teams Service URL Methods ---
+
+  saveTeamsServiceUrl(conversationId: string, serviceUrl: string, teamId?: string, tenantId?: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO teams_conversations (conversation_id, team_id, tenant_id, service_url, updated_at)
+         VALUES (?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(conversation_id) DO UPDATE SET
+           team_id = COALESCE(excluded.team_id, teams_conversations.team_id),
+           tenant_id = COALESCE(excluded.tenant_id, teams_conversations.tenant_id),
+           service_url = excluded.service_url,
+           updated_at = datetime('now')`
+      )
+      .run(conversationId, teamId || null, tenantId || null, serviceUrl);
+  }
+
+  /**
+   * Find the best-known service URL for a Teams channel: exact conversation, then any
+   * conversation in the same team, then the most recently seen URL (service URLs are
+   * per-tenant region, and most deployments bridge a single tenant).
+   */
+  findTeamsServiceUrl(conversationId: string, teamId?: string): string | undefined {
+    const exact = this.db
+      .prepare('SELECT service_url FROM teams_conversations WHERE conversation_id = ?')
+      .get(conversationId) as { service_url: string } | undefined;
+    if (exact) return exact.service_url;
+
+    if (teamId) {
+      const team = this.db
+        .prepare(
+          'SELECT service_url FROM teams_conversations WHERE team_id = ? OR conversation_id = ? ORDER BY updated_at DESC LIMIT 1'
+        )
+        .get(teamId, teamId) as { service_url: string } | undefined;
+      if (team) return team.service_url;
+    }
+
+    const latest = this.db
+      .prepare('SELECT service_url FROM teams_conversations ORDER BY updated_at DESC LIMIT 1')
+      .get() as { service_url: string } | undefined;
+    return latest?.service_url;
+  }
+
+  hasTeamsServiceUrl(conversationId: string): boolean {
+    return Boolean(
+      this.db.prepare('SELECT 1 FROM teams_conversations WHERE conversation_id = ?').get(conversationId)
+    );
   }
 
   // --- User Cache Methods ---

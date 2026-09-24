@@ -3,7 +3,7 @@
  * Handles bidirectional conversion between Slack mrkdwn and Teams CommonMark/HTML.
  */
 
-import { UserIdentity } from './types.js';
+import { Attachment, Platform, UserIdentity } from './types.js';
 
 /**
  * Teams reaction types mapped to Slack emoji names.
@@ -32,7 +32,87 @@ const SLACK_TO_TEAMS_REACTIONS: Record<string, string> = {
   rage: 'angry',
 };
 
+/**
+ * Unicode glyphs for common Slack emoji names, used where a platform can't show a native reaction.
+ * Anything not listed falls back to `:name:`.
+ */
+const SLACK_EMOJI_GLYPHS: Record<string, string> = {
+  '+1': '👍', thumbsup: '👍', '-1': '👎', thumbsdown: '👎',
+  heart: '❤️', joy: '😂', laughing: '😆', smile: '😄', grin: '😁', slightly_smiling_face: '🙂',
+  sweat_smile: '😅', heart_eyes: '😍', sunglasses: '😎', thinking_face: '🤔', open_mouth: '😮',
+  astonished: '😲', cry: '😢', sob: '😭', angry: '😠', rage: '😡', face_palm: '🤦', facepalm: '🤦',
+  tada: '🎉', eyes: '👀', fire: '🔥', rocket: '🚀', sparkles: '✨', star: '⭐', '100': '💯',
+  white_check_mark: '✅', heavy_check_mark: '✔️', x: '❌', warning: '⚠️', question: '❓',
+  exclamation: '❗', bulb: '💡', memo: '📝', pray: '🙏', clap: '👏', raised_hands: '🙌',
+  wave: '👋', ok_hand: '👌', muscle: '💪', point_up: '☝️', party_popper: '🎉',
+};
+
+/** A reaction emoji and the display names of the users who added it. */
+export interface ReactionGroup {
+  emoji: string;
+  users: string[];
+}
+
 export class MessageTranslator {
+  /**
+   * Render a Slack emoji name (e.g. `+1`, `:tada:`, `wave::skin-tone-3`) as a glyph, or `:name:`.
+   */
+  static slackEmojiToGlyph(name: string): string {
+    const base = name.replace(/^:|:$/g, '').split('::')[0].toLowerCase();
+    return SLACK_EMOJI_GLYPHS[base] || `:${base}:`;
+  }
+
+  /**
+   * Footer appended to a bridge-posted Teams message: `👍 3 · 🎉 1 — reactions from Slack`.
+   */
+  static formatReactionFooter(groups: ReactionGroup[]): string {
+    if (groups.length === 0) return '';
+    const parts = groups.map((g) => `${this.slackEmojiToGlyph(g.emoji)} ${g.users.length}`);
+    return `${parts.join(' · ')} — reactions from Slack`;
+  }
+
+  /**
+   * Text of the single thread-reply notice for a Teams-authored message:
+   * `Reactions from Slack: 👍 Jane, Omar · 🎉 Priya`, optionally quoting the message.
+   */
+  static formatReactionNotice(groups: ReactionGroup[], excerptOf?: string): string {
+    const parts = groups.map((g) => {
+      const shown = g.users.slice(0, 3).join(', ');
+      const more = g.users.length > 3 ? ` +${g.users.length - 3}` : '';
+      return `${this.slackEmojiToGlyph(g.emoji)} ${shown}${more}`;
+    });
+    const quote = excerptOf ? ` on "${this.excerpt(excerptOf)}"` : '';
+    return `_Reactions from Slack${quote}:_ ${parts.join(' · ')}`;
+  }
+
+  /**
+   * Append one `📎 name` line per attachment to message content, written in the source platform's
+   * dialect so the normal translation turns it into a link on the other side. The files themselves
+   * aren't transferred (#12); viewers may need access on the source platform to open them.
+   */
+  static appendAttachmentLines(content: string, attachments: Attachment[] | undefined, dialect: Platform): string {
+    if (!attachments?.length) return content;
+    const where = dialect === 'slack' ? 'Slack' : 'Teams';
+
+    const lines = attachments.map((a) => {
+      if (!a.permalink) return `📎 ${a.name} (shared in ${where})`;
+      if (dialect === 'slack') {
+        const label = a.name.replace(/[<>|]/g, '');
+        return `📎 <${a.permalink}|${label}> (shared in ${where})`;
+      }
+      const label = a.name.replace(/[[\]]/g, '');
+      return `📎 [${label}](${a.permalink}) (shared in ${where})`;
+    });
+
+    return [content.trim(), ...lines].filter(Boolean).join('\n');
+  }
+
+  /** First ~60 characters of a message as plain text, for quoting. */
+  static excerpt(text: string, max = 60): string {
+    const plain = text.replace(/<[^>]+>/g, '').replace(/[*_~`>]/g, '').replace(/\s+/g, ' ').trim();
+    return plain.length > max ? `${plain.slice(0, max - 1).trimEnd()}…` : plain;
+  }
+
   /**
    * Convert a Teams reaction type into a Slack emoji name, or undefined if there is no equivalent.
    */
@@ -220,16 +300,20 @@ export class MessageTranslator {
   /**
    * Format message for display in Teams using clean markdown header.
    */
-  static formatForTeamsMarkdown(sender: UserIdentity, content: string): string {
+  static formatForTeamsMarkdown(sender: UserIdentity, content: string, footer?: string): string {
     const cleanContent = this.slackToTeams(content);
-    return `**[Slack] ${sender.displayName}**\n\n${cleanContent}`;
+    const text = `**[Slack] ${sender.displayName}**\n\n${cleanContent}`;
+    return footer ? `${text}\n\n_${footer}_` : text;
   }
 
   /**
    * Generate an Adaptive Card payload for Teams display.
    */
-  static formatForTeamsAdaptiveCard(sender: UserIdentity, content: string): object {
+  static formatForTeamsAdaptiveCard(sender: UserIdentity, content: string, footer?: string): object {
     const cleanContent = this.slackToTeams(content);
+    const footerBlocks = footer
+      ? [{ type: 'TextBlock', text: footer, isSubtle: true, size: 'Small', wrap: true, spacing: 'Small' }]
+      : [];
 
     return {
       type: 'AdaptiveCard',
@@ -275,7 +359,8 @@ export class MessageTranslator {
           type: 'TextBlock',
           text: cleanContent,
           wrap: true
-        }
+        },
+        ...footerBlocks
       ]
     };
   }

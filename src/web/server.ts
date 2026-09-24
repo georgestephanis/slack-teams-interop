@@ -97,7 +97,15 @@ export function createWebServer(options: ServerOptions) {
 
   // Get all channel mappings
   app.get('/api/mappings', (_req: Request, res: Response) => {
-    res.json(bridge.db.getAllChannelMappings());
+    res.json(
+      bridge.db.getAllChannelMappings().map((m) => ({
+        ...m,
+        status: {
+          // False until the bridge has seen an activity from this Teams channel (see #10)
+          teamsServiceUrlKnown: bridge.db.hasTeamsServiceUrl(m.teams.channelId),
+        },
+      }))
+    );
   });
 
   // Create or update mapping

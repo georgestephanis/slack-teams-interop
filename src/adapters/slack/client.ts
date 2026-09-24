@@ -10,6 +10,7 @@ import { WebClient } from '@slack/web-api';
 import { BridgeAdapter, BridgeCore } from '../../core/bridge.js';
 import { MessageTranslator } from '../../core/translator.js';
 import {
+  Attachment,
   ChannelMapping,
   NormalizedMessage,
   NormalizedReaction,
@@ -25,6 +26,50 @@ export interface SlackAdapterConfig {
   appToken?: string; // Required for Socket Mode
   signingSecret?: string; // Required for HTTP Webhook mode
   useSocketMode?: boolean;
+}
+
+interface SlackFile {
+  id: string;
+  name?: string;
+  title?: string;
+  mimetype?: string;
+  size?: number;
+  permalink?: string;
+  url_private?: string;
+  thumb_360?: string;
+}
+
+interface SlackMessageChangedEvent {
+  channel: string;
+  message?: {
+    ts: string;
+    text?: string;
+    user?: string;
+    bot_id?: string;
+    thread_ts?: string;
+    edited?: unknown;
+    files?: SlackFile[];
+  };
+}
+
+/** Map Slack file objects to normalized attachments (links only; files aren't transferred). */
+function toAttachments(files?: SlackFile[]): Attachment[] | undefined {
+  if (!files?.length) return undefined;
+  return files.map((f) => ({
+    id: f.id,
+    name: f.name || f.title || 'file',
+    contentType: f.mimetype || 'application/octet-stream',
+    size: f.size,
+    downloadUrl: f.url_private,
+    permalink: f.permalink,
+    thumbnailUrl: f.thumb_360,
+  }));
+}
+
+interface SlackMessageDeletedEvent {
+  channel: string;
+  deleted_ts: string;
+  previous_message?: { user?: string; bot_id?: string };
 }
 
 export class SlackAdapter implements BridgeAdapter {
@@ -97,15 +142,29 @@ export class SlackAdapter implements BridgeAdapter {
   private setupEventListeners(): void {
     // 1. Listen for new messages in channels
     this.app.event('message', async ({ event }) => {
-      // Ignore edits, deletions, joins, and bot echoes
-      if (
-        'subtype' in event &&
-        (event.subtype === 'message_changed' ||
-          event.subtype === 'message_deleted' ||
-          event.subtype === 'channel_join' ||
-          event.subtype === 'channel_leave' ||
-          event.subtype === 'bot_message')
-      ) {
+      const subtype = 'subtype' in event ? event.subtype : undefined;
+
+      // Edits: only relay real user edits (unfurls and bridge chat.update calls also fire message_changed)
+      if (subtype === 'message_changed') {
+        await this.handleMessageChanged(event as unknown as SlackMessageChangedEvent);
+        return;
+      }
+
+      if (subtype === 'message_deleted') {
+        const deleted = event as unknown as SlackMessageDeletedEvent;
+        // A deleted bridge post (e.g. removed by a Slack admin) must not delete the Teams original
+        if (deleted.previous_message?.bot_id) return;
+        await this.bridge.handleIncomingDelete({
+          sourcePlatform: 'slack',
+          sourceChannelId: deleted.channel,
+          sourceMessageId: deleted.deleted_ts,
+          senderId: deleted.previous_message?.user,
+        });
+        return;
+      }
+
+      // Ignore joins and bot echoes
+      if (subtype === 'channel_join' || subtype === 'channel_leave' || subtype === 'bot_message') {
         return;
       }
 
@@ -116,9 +175,11 @@ export class SlackAdapter implements BridgeAdapter {
         ts: string;
         thread_ts?: string;
         bot_id?: string;
+        files?: SlackFile[];
       };
 
-      if (!messageEvent.user || !messageEvent.text) return;
+      const attachments = toAttachments(messageEvent.files);
+      if (!messageEvent.user || (!messageEvent.text && !attachments)) return;
       if (messageEvent.bot_id) return;
 
       // Resolve user profile
@@ -131,7 +192,8 @@ export class SlackAdapter implements BridgeAdapter {
         sourceMessageId: messageEvent.ts,
         sourceParentId: messageEvent.thread_ts !== messageEvent.ts ? messageEvent.thread_ts : undefined,
         sender,
-        content: messageEvent.text,
+        content: messageEvent.text || '',
+        attachments,
         timestamp: new Date(parseFloat(messageEvent.ts) * 1000),
         rawEvent: event,
       };
@@ -139,22 +201,45 @@ export class SlackAdapter implements BridgeAdapter {
       await this.bridge.handleIncomingMessage(normalized);
     });
 
-    // 2. Listen for emoji reactions
-    this.app.event('reaction_added', async ({ event }) => {
-      if (event.item.type !== 'message') return;
+    // 2. Listen for emoji reactions being added and removed
+    const onReaction = (action: 'add' | 'remove') =>
+      async ({ event }: { event: { user: string; reaction: string; item: { type: string; channel?: string; ts?: string } } }) => {
+        if (event.item.type !== 'message' || !event.item.channel || !event.item.ts) return;
 
-      const sender = await this.resolveUserInfo(event.user);
-      const normalizedReaction: NormalizedReaction = {
-        id: `slack-reaction-${event.item.channel}-${event.item.ts}-${event.reaction}`,
-        sourcePlatform: 'slack',
-        sourceChannelId: event.item.channel,
-        sourceMessageId: event.item.ts,
-        sender,
-        emoji: event.reaction,
-        action: 'add',
+        const sender = await this.resolveUserInfo(event.user);
+        const normalizedReaction: NormalizedReaction = {
+          id: `slack-reaction-${event.item.channel}-${event.item.ts}-${event.reaction}`,
+          sourcePlatform: 'slack',
+          sourceChannelId: event.item.channel,
+          sourceMessageId: event.item.ts,
+          sender,
+          emoji: event.reaction,
+          action,
+        };
+
+        await this.bridge.handleIncomingReaction(normalizedReaction);
       };
 
-      await this.bridge.handleIncomingReaction(normalizedReaction);
+    this.app.event('reaction_added', onReaction('add'));
+    this.app.event('reaction_removed', onReaction('remove'));
+  }
+
+  private async handleMessageChanged(event: SlackMessageChangedEvent): Promise<void> {
+    const edited = event.message;
+    if (!edited?.user || !edited.edited || edited.bot_id || edited.text === undefined) return;
+
+    const sender = await this.resolveUserInfo(edited.user);
+    await this.bridge.handleIncomingEdit({
+      id: `slack-edit-${event.channel}-${edited.ts}`,
+      sourcePlatform: 'slack',
+      sourceChannelId: event.channel,
+      sourceMessageId: edited.ts,
+      sourceParentId: edited.thread_ts !== edited.ts ? edited.thread_ts : undefined,
+      sender,
+      content: edited.text,
+      attachments: toAttachments(edited.files),
+      timestamp: new Date(),
+      rawEvent: event,
     });
   }
 
@@ -228,6 +313,46 @@ export class SlackAdapter implements BridgeAdapter {
   }
 
   /**
+   * Update a message the bridge posted to Slack (the Teams original was edited).
+   * chat.update keeps the original username/icon override.
+   */
+  async updateMessage(targetChannelId: string, targetMessageId: string, message: NormalizedMessage): Promise<void> {
+    await this.client.chat.update({
+      channel: targetChannelId,
+      ts: targetMessageId,
+      text: MessageTranslator.teamsToSlack(message.content),
+    });
+  }
+
+  /**
+   * Delete a message the bridge posted to Slack (the Teams original was deleted).
+   */
+  async deleteMessage(targetChannelId: string, targetMessageId: string): Promise<void> {
+    try {
+      await this.client.chat.delete({ channel: targetChannelId, ts: targetMessageId });
+    } catch (err: unknown) {
+      if (slackErrorCode(err) === 'message_not_found') return;
+      throw err;
+    }
+  }
+
+  /**
+   * Remove a mirrored reaction from a Slack message.
+   */
+  async removeReaction(targetChannelId: string, targetMessageId: string, reaction: NormalizedReaction): Promise<void> {
+    const name =
+      reaction.sourcePlatform === 'teams' ? MessageTranslator.teamsReactionToSlack(reaction.emoji) : reaction.emoji;
+    if (!name) return;
+
+    try {
+      await this.client.reactions.remove({ channel: targetChannelId, timestamp: targetMessageId, name });
+    } catch (err: unknown) {
+      if (slackErrorCode(err) === 'no_reaction') return;
+      throw err;
+    }
+  }
+
+  /**
    * Mirror a reaction onto a Slack message.
    */
   async sendReaction(
@@ -249,11 +374,16 @@ export class SlackAdapter implements BridgeAdapter {
       });
     } catch (err: unknown) {
       // Ignore already_reacted error
-      if (typeof err === 'object' && err !== null && 'data' in err) {
-        const slackErr = err as { data?: { error?: string } };
-        if (slackErr.data?.error === 'already_reacted') return;
-      }
+      if (slackErrorCode(err) === 'already_reacted') return;
       throw err;
     }
   }
+}
+
+/** Extract the Slack Web API error code (e.g. `already_reacted`) from a thrown error, if any. */
+function slackErrorCode(err: unknown): string | undefined {
+  if (typeof err === 'object' && err !== null && 'data' in err) {
+    return (err as { data?: { error?: string } }).data?.error;
+  }
+  return undefined;
 }
