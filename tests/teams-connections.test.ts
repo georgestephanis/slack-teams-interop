@@ -86,10 +86,10 @@ describe('Teams connections', () => {
     adapter = new TeamsAdapter(
       { appId: 'env-app', appPassword: 'pw', appTenantId: 'env-tenant', appType: 'SingleTenant' },
       bridge,
-      { defaultConnectionId: 'oldways' }
+      { defaultConnectionId: 'initech' }
     );
     store = new TeamsConnectionStore(bridge.db, adapter, new CredentialCipher(KEY), {
-      id: 'oldways',
+      id: 'initech',
       appId: 'env-app',
       tenantId: 'env-tenant',
       appType: 'SingleTenant',
@@ -109,7 +109,7 @@ describe('Teams connections', () => {
       expect(raw).not.toContain('acme-secret');
       expect(JSON.stringify(store.list())).not.toContain('acme-secret');
       expect(store.list().map((c) => [c.id, c.source, c.active])).toEqual([
-        ['oldways', 'env', true],
+        ['initech', 'env', true],
         ['acme', 'db', true],
       ]);
       expect(adapter.hasConnection('acme')).toBe(true);
@@ -126,7 +126,7 @@ describe('Teams connections', () => {
       [{ ...ACME, id: 'Bad Id' }, 400],
       [{ ...ACME, tenantId: undefined }, 400],
       [{ ...ACME, appPassword: undefined }, 400],
-      [{ ...ACME, id: 'oldways' }, 409],
+      [{ ...ACME, id: 'initech' }, 409],
       [{ ...ACME, appId: 'env-app' }, 409],
     ])('rejects invalid input %#', (input, status) => {
       expect(() => store.save(input)).toThrow(TeamsConnectionError);
@@ -173,7 +173,7 @@ describe('Teams connections', () => {
       bridge.db.saveChannelMapping(mapping('acme', '19:a@thread.tacv2', 'acme'));
       expect(bridge.db.getChannelMapping('legacy')!.teams.connectionId).toBeUndefined();
       expect(bridge.db.getChannelMapping('acme')!.teams.connectionId).toBe('acme');
-      expect(bridge.db.countMappingsForTeamsConnection('oldways', true)).toBe(1);
+      expect(bridge.db.countMappingsForTeamsConnection('initech', true)).toBe(1);
       expect(bridge.db.countMappingsForTeamsConnection('acme')).toBe(1);
     });
   });
@@ -201,7 +201,7 @@ describe('Teams connections', () => {
       store.save({ ...ACME, serviceUrl: 'https://smba.trafficmanager.net/emea/' });
       store.save(GLOBEX);
       const calls: string[] = [];
-      capture('oldways', calls);
+      capture('initech', calls);
       capture('acme', calls);
       capture('globex', calls);
 
@@ -212,7 +212,7 @@ describe('Teams connections', () => {
       expect(calls).toEqual([
         'acme:acme-app:https://smba.trafficmanager.net/emea/',
         'globex:globex-app:https://smba.trafficmanager.net/amer/',
-        'oldways:env-app:https://smba.trafficmanager.net/amer/',
+        'initech:env-app:https://smba.trafficmanager.net/amer/',
       ]);
     });
 
@@ -269,7 +269,7 @@ describe('Teams connections', () => {
 
     it('relays activities that arrive on the right connection from the right tenant', async () => {
       await deliver('acme', CHANNEL_A, 'acme-tenant');
-      await deliver('oldways', CHANNEL_L, 'env-tenant');
+      await deliver('initech', CHANNEL_L, 'env-tenant');
       expect(received.map((m) => m.sourceChannelId)).toEqual([CHANNEL_A, CHANNEL_L]);
       expect(errors).toEqual([]);
     });
@@ -283,7 +283,7 @@ describe('Teams connections', () => {
     });
 
     it('drops activities for a channel bridged through a different connection', async () => {
-      await deliver('oldways', CHANNEL_A, 'env-tenant');
+      await deliver('initech', CHANNEL_A, 'env-tenant');
       expect(received).toEqual([]);
       expect(errors[0].message).toMatch(/its bridge uses "acme"/);
     });
