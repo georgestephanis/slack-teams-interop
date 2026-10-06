@@ -3,11 +3,25 @@
  * Teams app package. Avoids a dependency for three tiny files.
  */
 
-import zlib from 'node:zlib';
-
 export interface ZipEntry {
   name: string;
   data: Buffer;
+}
+
+const CRC_TABLE = Uint32Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+
+/**
+ * CRC-32 as ZIP requires. Implemented here because zlib.crc32 only exists from Node 22.2, and
+ * the package supports all of Node 22.
+ */
+export function crc32(data: Buffer): number {
+  let crc = 0xffffffff;
+  for (const byte of data) crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 /** Fixed DOS timestamp (1980-01-01 00:00), so identical inputs produce identical archives. */
@@ -21,7 +35,7 @@ export function createZip(entries: ZipEntry[]): Buffer {
 
   for (const { name, data } of entries) {
     const nameBytes = Buffer.from(name, 'utf8');
-    const crc = zlib.crc32(data);
+    const crc = crc32(data);
 
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0); // local file header signature

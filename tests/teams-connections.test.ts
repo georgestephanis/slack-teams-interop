@@ -1,14 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import http from 'node:http';
-import zlib from 'node:zlib';
 import { TurnContext } from 'botbuilder';
 import { BridgeCore } from '../src/core/bridge.js';
 import { CredentialCipher } from '../src/core/credentials.js';
 import { TeamsAdapter } from '../src/adapters/teams/client.js';
 import { TeamsConnectionError, TeamsConnectionStore } from '../src/adapters/teams/connections.js';
 import { buildTeamsManifest, teamsAppIdFor } from '../src/adapters/teams/manifest.js';
-import { createZip } from '../src/web/zip.js';
+import { crc32, createZip } from '../src/web/zip.js';
 import { createWebServer } from '../src/web/server.js';
 import { ChannelMapping, DEFAULT_MAPPING_OPTIONS, NormalizedMessage } from '../src/core/types.js';
 
@@ -48,7 +47,7 @@ function readZip(buf: Buffer): Map<string, Buffer> {
     const nameLen = buf.readUInt16LE(i + 26);
     const name = buf.subarray(i + 30, i + 30 + nameLen).toString();
     const data = buf.subarray(i + 30 + nameLen, i + 30 + nameLen + size);
-    expect(zlib.crc32(data)).toBe(crc);
+    expect(crc32(data)).toBe(crc);
     out.set(name, data);
     i += 30 + nameLen + size;
   }
@@ -411,6 +410,12 @@ describe('Teams manifest template', () => {
 });
 
 describe('createZip', () => {
+  it('computes standard CRC-32 values', () => {
+    // Reference check value for CRC-32/ISO-HDLC
+    expect(crc32(Buffer.from('123456789'))).toBe(0xcbf43926);
+    expect(crc32(Buffer.alloc(0))).toBe(0);
+  });
+
   it('writes entries that read back intact', () => {
     const files = readZip(createZip([{ name: 'a.txt', data: Buffer.from('hello') }, { name: 'b.bin', data: Buffer.from([0, 1, 2]) }]));
     expect(files.get('a.txt')!.toString()).toBe('hello');
