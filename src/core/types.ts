@@ -107,6 +107,11 @@ export interface ChannelMapping {
     channelId: string;
     teamName?: string;
     channelName?: string;
+    /**
+     * Teams connection (Azure Bot / Microsoft 365 tenant) this channel belongs to.
+     * Unset means the connection configured through TEAMS_APP_ID.
+     */
+    connectionId?: string;
   };
   options: {
     syncThreads: boolean;

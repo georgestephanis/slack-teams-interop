@@ -69,18 +69,31 @@ InterBridge uses **Resource-Specific Consent (RSC)**, so a Team Owner can instal
 5. Under **Channels**, add **Microsoft Teams** and accept the terms.
 
 ### Step 3.2: Package and install the Teams app
-1. Edit [`manifests/teams/manifest.json`](../manifests/teams/manifest.json) and replace `"YOUR_AZURE_BOT_APP_ID"` with your Microsoft App ID.
-2. Build the package:
-   ```bash
-   npm run package:teams   # writes public/teams-app.zip
-   ```
-   This needs the `zip` command. The zip is simply `manifest.json`, `color.png` and `outline.png` at the top level, so you can also create it by hand.
+1. Download the package from the dashboard: **Teams Connections** -> **Teams App Package** on the connection's row. The bridge builds it with that bot's App ID, so it installs as-is. The same download is at `GET /api/manifests/teams?connection=<id>` (admin auth).
 
-   > The prebuilt `public/teams-app.zip` in the repo (also offered on the dashboard as **Download Teams App Package**) contains the **placeholder** bot ID. It won't work until you rebuild it with your own ID.
-3. In Microsoft Teams:
+   > The prebuilt `public/teams-app.zip` and [`manifests/teams/manifest.json`](../manifests/teams/manifest.json) contain a **placeholder** bot ID, for building a package by hand. Replace `YOUR_AZURE_BOT_APP_ID` (it appears twice) and zip `manifest.json`, `color.png` and `outline.png` at the top level.
+2. In Microsoft Teams:
    - Go to the team you want to bridge.
    - Click **⋯** next to the team name -> **Manage team** -> **Apps** -> **Upload a custom app** (or upload it to your tenant's app catalog).
    - Select the zip file and click **Add**. As Team Owner, you consent to `ChannelMessage.Read.Group` for this team.
+
+### Bridging several Microsoft 365 tenants
+
+One InterBridge instance, and one Slack app, can bridge channels in several organizations' Teams. Azure no longer creates multi-tenant bots, so **each tenant needs its own single-tenant Azure Bot**, registered in that tenant. The bridge keeps one **Teams connection** per bot, and every channel bridge belongs to one connection.
+
+1. Set `CREDENTIALS_KEY` (see below). Connection secrets are stored in the database, encrypted with it.
+2. In the dashboard, open **Teams Connections** -> **Add Connection**. Choose an **ID**, a short slug such as `acme`. It names the connection's messaging endpoint, `https://<PUBLIC_URL>/api/messages/<id>`, and can't be changed later.
+3. Someone in the other organization creates the Azure Bot as in Step 3.1, in their own tenant, with **Messaging endpoint** set to that URL. They send you the App ID, App Tenant ID, and client secret, ideally the secret through a password manager. Enter them on the connection, along with the secret's expiry date so the dashboard can warn you before it lapses.
+4. Download that connection's **Teams App Package** and have a Team Owner there install it (Step 3.2).
+5. Add channel bridges with that connection selected (Section 7).
+
+Changes to connections take effect immediately, without a restart. The bot configured through `TEAMS_APP_ID`, if any, appears as a read-only connection named by `TEAMS_CONNECTION_ID`. It answers at both `/api/messages` and `/api/messages/<TEAMS_CONNECTION_ID>`, and bridges created before connections existed use it.
+
+The bridge only accepts an activity if:
+- it came from the tenant of the connection it arrived on, and
+- it's for a channel bridged through that connection.
+
+A Teams channel can be bridged through only one connection.
 
 ---
 
@@ -109,6 +122,8 @@ cp .env.example .env
 | `TEAMS_TENANT_ID` | Single-tenant | — | Your Microsoft Entra tenant ID. |
 | `TEAMS_APP_TYPE` | No | `MultiTenant` | Must match the bot's **Type of App**. New bots: set `SingleTenant` (it also needs `TEAMS_TENANT_ID`). |
 | `TEAMS_SERVICE_URL` | No | `https://smba.trafficmanager.net/amer/` | Fallback Bot Framework endpoint. See the note below. |
+| `TEAMS_CONNECTION_ID` | No | `default` | Connection ID of the `TEAMS_APP_ID` bot: its extra endpoint is `/api/messages/<id>`, and bridges without a connection use it. |
+| `CREDENTIALS_KEY` | For dashboard connections | — | At least 32 characters. Encrypts the client secrets of Teams connections added in the dashboard. Generate with `openssl rand -base64 48`, and back it up: without it the stored connections can't be decrypted. |
 | `MEDIA_PROXY_SECRET` | No | — | At least 32 characters. Enables inline Slack images in Teams; see [Section 5](#5-optional-show-slack-images-inline-in-teams). |
 
 The bridge starts with whichever platforms are configured. Without Slack or Teams credentials, it runs in dashboard/API-only mode.
@@ -171,6 +186,7 @@ Running an older version against a database that a newer version has upgraded is
 2. Click **Add Channel Bridge** and fill in:
    - **Bridge Name**: e.g. `Client Alpha Sync`.
    - **Slack Channel ID**: right-click the channel -> **Copy link**. The ID is the last part, e.g. `C0123456789`.
+   - **Teams Connection**: the Azure Bot of the tenant the Teams channel belongs to. With a single tenant there's only one choice.
    - **Teams Team ID** and **Teams Channel ID**: in Teams, click **⋯** next to the channel -> **Get link to channel**. The link contains the channel ID in URL-encoded form, e.g. `19%3a1a2b3c...%40thread.tacv2`. **Decode it** before pasting (`%3a` → `:`, `%40` → `@`), giving `19:1a2b3c...@thread.tacv2`. For the Team ID, use **Get link to team** and decode the same `19:...@thread.tacv2` part of that link.
    - **Teams Display Style**: **Adaptive Card** (sender avatar and name) or **Clean Markdown** (`**[Slack] Jane Doe**` header).
    - **Options**:
@@ -197,10 +213,12 @@ To change a bridge's options later, delete it and add it again with the same cha
 | Symptom | Likely cause |
 | :--- | :--- |
 | Nothing relays from Slack | The bot isn't in the channel (`/invite @InterBridge`), the Slack channel ID is wrong, or the dashboard shows Slack **Offline** (check the tokens and the logs). |
-| Nothing relays from Teams | The Teams app isn't installed in that team, the messaging endpoint in Azure doesn't point to `https://<PUBLIC_URL>/api/messages`, or the channel ID wasn't URL-decoded. |
+| Nothing relays from Teams | The Teams app isn't installed in that team, the messaging endpoint in Azure doesn't point to the connection's URL (`https://<PUBLIC_URL>/api/messages/<id>`), or the channel ID wasn't URL-decoded. |
+| Logs show "arrived on connection X, but its bridge uses Y", or "from another tenant" | The tenant's Azure Bot points at another connection's messaging endpoint, or the bridge was created with the wrong connection. |
+| A Teams connection shows **Inactive** | It's disabled, or its secret couldn't be decrypted: `CREDENTIALS_KEY` is missing or isn't the key it was saved with. Check the startup log. |
 | Teams returns 401/403, or the logs show "Teams Turn Error" auth failures | `TEAMS_APP_TYPE` doesn't match the Azure bot's **Type of App**, or `TEAMS_TENANT_ID`/`TEAMS_APP_PASSWORD` is wrong or expired. |
 | Slack → Teams fails for a non-US tenant | The bridge hasn't seen that team yet and is using the `TEAMS_SERVICE_URL` fallback. Send any message in the Teams channel, or set `TEAMS_SERVICE_URL` to your region. The dashboard shows "⚠ region not yet detected". |
-| Teams says the app package is invalid, or messages are ignored | The package still has the placeholder bot ID. Rebuild it after editing `manifest.json` (Step 3.2). |
+| Teams says the app package is invalid, or messages are ignored | The package still has the placeholder bot ID. Download the connection's package from the dashboard instead (Step 3.2). |
 | Slack images show as links in Teams | `MEDIA_PROXY_SECRET` or `PUBLIC_URL` isn't set, or `/media/slack/*` isn't forwarded by your proxy. |
 | The bridge refuses to start with "newer than this build supports" | You're running an older version against an upgraded database. Upgrade, or restore the matching `.bak-v<N>` backup. |
 

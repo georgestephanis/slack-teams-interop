@@ -7,8 +7,8 @@
   "developer": {
     "name": "InterBridge Self-Hosted",
     "websiteUrl": "https://github.com/georgestephanis/slack-teams-interop",
-    "privacyUrl": "https://github.com/georgestephanis/slack-teams-interop",
-    "termsOfUseUrl": "https://github.com/georgestephanis/slack-teams-interop"
+    "privacyUrl": "https://github.com/georgestephanis/slack-teams-interop/blob/trunk/SECURITY.md",
+    "termsOfUseUrl": "https://github.com/georgestephanis/slack-teams-interop/blob/trunk/LICENSE"
   },
   "icons": {
     "color": "color.png",
@@ -22,15 +22,21 @@
     "short": "Two-way channel bridge connecting Microsoft Teams to Slack",
     "full": "Bridges messages, threads, reactions, and files between Microsoft Teams and Slack channels using Resource-Specific Consent."
   },
-  "accentColor": "#6366f1",
+  "accentColor": "#4338CA",
   "bots": [
     {
       "botId": "YOUR_AZURE_BOT_APP_ID",
-      "scopes": ["team"],
+      "scopes": [
+        "team"
+      ],
       "supportsFiles": true,
       "isNotificationOnly": false
     }
   ],
+  "webApplicationInfo": {
+    "id": "YOUR_AZURE_BOT_APP_ID",
+    "resource": "https://interbridge.invalid/rsc"
+  },
   "authorization": {
     "permissions": {
       "resourceSpecific": [
