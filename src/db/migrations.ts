@@ -113,6 +113,30 @@ export const migrations: Migration[] = [
   (db) => {
     db.exec(`ALTER TABLE message_mappings ADD COLUMN source_attachments TEXT;`);
   },
+
+  // 6: Teams connections, so one instance can bridge several Microsoft 365 tenants (one Azure Bot
+  // each). Client secrets are stored encrypted. A mapping with no connection id uses the connection
+  // configured through TEAMS_APP_ID, which is how every mapping created before this worked.
+  (db) => {
+    db.exec(`
+      CREATE TABLE teams_connections (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        app_id TEXT NOT NULL UNIQUE,
+        app_password_enc TEXT NOT NULL,
+        tenant_id TEXT,
+        app_type TEXT NOT NULL DEFAULT 'SingleTenant',
+        service_url TEXT,
+        secret_expires_at TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      ALTER TABLE channel_mappings ADD COLUMN teams_connection_id TEXT;
+      CREATE INDEX idx_cm_teams_conn ON channel_mappings (teams_connection_id);
+      CREATE INDEX idx_tc_tenant ON teams_conversations (tenant_id, updated_at);
+    `);
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = migrations.length;

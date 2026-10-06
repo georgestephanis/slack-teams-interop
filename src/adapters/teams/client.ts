@@ -40,25 +40,73 @@ export interface TeamsAdapterConfig {
   serviceUrl?: string; // Default Azure Bot service URL: https://smba.trafficmanager.net/amer/
 }
 
+/** One Azure Bot registration the adapter can receive from and post as. */
+export interface TeamsConnectionConfig extends TeamsAdapterConfig {
+  /** Slug that names the connection in mappings and in its webhook path (`/api/messages/<id>`) */
+  id: string;
+  name?: string;
+}
+
+interface TeamsConnection {
+  id: string;
+  name: string;
+  config: TeamsAdapterConfig;
+  cloudAdapter: CloudAdapter;
+}
+
+export interface TeamsAdapterOptions {
+  /** Id of the connection built from the constructor config (TEAMS_CONNECTION_ID). */
+  defaultConnectionId?: string;
+  /** Service URL used when nothing is known for a channel and its connection sets none. */
+  serviceUrl?: string;
+}
+
+export const DEFAULT_TEAMS_CONNECTION_ID = 'default';
+const DEFAULT_SERVICE_URL = 'https://smba.trafficmanager.net/amer/';
+/** turnState key holding the connection an inbound activity arrived on */
+const CONNECTION_KEY = Symbol('interbridge.teamsConnection');
+
+/**
+ * Teams side of the bridge. Holds one Bot Framework adapter per connection (Azure Bot), so a
+ * single instance can bridge channels in several Microsoft 365 tenants. Inbound activities are
+ * authenticated by the connection whose webhook they arrived on; outbound calls use the
+ * connection of the channel mapping.
+ */
 export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter {
   public platform: Platform = 'teams';
-  public adapter: CloudAdapter;
-  private botAppId: string;
+  public readonly defaultConnectionId: string;
+  private connections = new Map<string, TeamsConnection>();
+  private fallbackServiceUrl: string;
   /** In-memory cache in front of the persisted teams_conversations table */
   private serviceUrlMap = new Map<string, string>();
   private warnedFallbackChannels = new Set<string>();
 
+  /**
+   * @param config The TEAMS_APP_ID bot, registered as the default connection. Optional: more
+   *   connections can be added later with addConnection.
+   */
   constructor(
-    private config: TeamsAdapterConfig,
-    private bridge: BridgeCore
+    config: TeamsAdapterConfig | undefined,
+    private bridge: BridgeCore,
+    options: TeamsAdapterOptions = {}
   ) {
     super();
+    this.defaultConnectionId = options.defaultConnectionId || DEFAULT_TEAMS_CONNECTION_ID;
+    this.fallbackServiceUrl = options.serviceUrl || config?.serviceUrl || DEFAULT_SERVICE_URL;
 
-    this.botAppId = config.appId;
-    if (this.botAppId) {
-      this.bridge.dedup.registerBotId('teams', this.botAppId);
+    if (config?.appId) {
+      this.addConnection({ ...config, id: this.defaultConnectionId });
     }
 
+    this.setupHandlers();
+  }
+
+  /**
+   * Register (or replace) a connection. Takes effect immediately for both its webhook and
+   * outbound posts.
+   */
+  addConnection(connection: TeamsConnectionConfig): void {
+    const { id, name, ...config } = connection;
     if (config.appType === 'SingleTenant' && !config.appTenantId) {
       throw new Error('Teams SingleTenant bots require a tenant ID (TEAMS_TENANT_ID)');
     }
@@ -69,23 +117,105 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
       MicrosoftAppTenantId: config.appTenantId,
       MicrosoftAppType: config.appType ?? 'MultiTenant',
     });
+    const cloudAdapter = new CloudAdapter(botAuth);
 
-    this.adapter = new CloudAdapter(botAuth);
-
-    // Setup error handling
     // Report and swallow: rethrowing here returns a 500 to Bot Framework, which redelivers the activity.
-    this.adapter.onTurnError = async (_context, error) => {
+    cloudAdapter.onTurnError = async (_context, error) => {
       const cause = error instanceof Error ? error : new Error(String(error));
-      this.bridge.emit('error', new Error(`Teams Turn Error: ${cause.message}`, { cause }));
+      this.bridge.emit('error', new Error(`Teams Turn Error (${id}): ${cause.message}`, { cause }));
     };
 
-    this.setupHandlers();
+    // Every connection's bot posts into bridged channels, so all of them must be filtered as bots
+    this.bridge.dedup.registerBotId('teams', config.appId);
+    this.connections.set(id, { id, name: name || id, config, cloudAdapter });
+  }
+
+  /** Stop receiving from and posting as a connection. Returns false if it wasn't registered. */
+  removeConnection(id: string): boolean {
+    return this.connections.delete(id);
+  }
+
+  hasConnection(id: string): boolean {
+    return this.connections.has(id);
+  }
+
+  get connectionCount(): number {
+    return this.connections.size;
+  }
+
+  /** Public details of the registered connections (no secrets). */
+  listConnections(): { id: string; name: string; appId: string; tenantId?: string; appType: string }[] {
+    return [...this.connections.values()].map((c) => ({
+      id: c.id,
+      name: c.name,
+      appId: c.config.appId,
+      tenantId: c.config.appTenantId,
+      appType: c.config.appType ?? 'MultiTenant',
+    }));
+  }
+
+  /** Bot Framework adapter of the default connection (the TEAMS_APP_ID bot). */
+  get adapter(): CloudAdapter {
+    return this.requireConnection(this.defaultConnectionId).cloudAdapter;
+  }
+
+  private requireConnection(id: string): TeamsConnection {
+    const connection = this.connections.get(id);
+    if (!connection) throw new Error(`Teams connection "${id}" is not configured`);
+    return connection;
+  }
+
+  /** Connection a channel mapping posts through. */
+  private connectionFor(mapping: ChannelMapping): TeamsConnection {
+    return this.requireConnection(mapping.teams.connectionId || this.defaultConnectionId);
+  }
+
+  /** Connection an inbound activity arrived on. */
+  private connectionOf(context: TurnContext): TeamsConnection {
+    const connection = context.turnState.get(CONNECTION_KEY) as TeamsConnection | undefined;
+    return connection ?? this.requireConnection(this.defaultConnectionId);
+  }
+
+  /**
+   * True when an inbound activity's tenant matches its connection. A single-tenant bot's tokens
+   * are only valid in its own tenant, so a mismatch means misrouted or forged traffic.
+   */
+  private tenantMatches(connection: TeamsConnection, activity: Partial<Activity>): boolean {
+    const expected = connection.config.appTenantId;
+    const actual: string | undefined = activity.channelData?.tenant?.id || activity.conversation?.tenantId;
+    return !expected || !actual || connection.config.appType !== 'SingleTenant' || expected === actual;
+  }
+
+  /**
+   * True unless the channel is bridged through a *different* connection. Unmapped channels pass,
+   * and BridgeCore ignores them as before.
+   */
+  private acceptsChannel(context: TurnContext, channelId: string): boolean {
+    const mapping = this.bridge.db.findMappingByTeamsChannel(channelId);
+    if (!mapping) return true;
+    const connection = this.connectionOf(context);
+    const expected = mapping.teams.connectionId || this.defaultConnectionId;
+    if (expected === connection.id) return true;
+    this.bridge.emit(
+      'error',
+      new Error(`Teams activity for ${channelId} arrived on connection "${connection.id}", but its bridge uses "${expected}"; ignored`)
+    );
+    return false;
   }
 
   private setupHandlers(): void {
-    // 0. Remember the service URL from every inbound activity (messages, installs, channel
-    // updates, reactions), so outbound posts reach the right region even before anyone speaks.
+    // 0. Reject activities from a tenant other than the connection's. Then remember the service
+    // URL from every inbound activity (messages, installs, channel updates, reactions), so
+    // outbound posts reach the right region even before anyone speaks.
     this.onTurn(async (context: TurnContext, next) => {
+      const connection = this.connectionOf(context);
+      if (!this.tenantMatches(connection, context.activity)) {
+        this.bridge.emit(
+          'error',
+          new Error(`Teams activity from another tenant arrived on connection "${connection.id}"; ignored`)
+        );
+        return;
+      }
       this.rememberServiceUrl(context.activity);
       await next();
     });
@@ -93,9 +223,10 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
     // 1. Process all incoming channel messages (captured via Resource-Specific Consent)
     this.onMessage(async (context: TurnContext, next) => {
       const activity = context.activity;
+      const connection = this.connectionOf(context);
 
       // Check if message is from the bot itself (Teams may send with or without '28:' prefix)
-      const bareAppId = this.botAppId.replace(/^28:/, '');
+      const bareAppId = connection.config.appId.replace(/^28:/, '');
       const senderId = activity.from?.id;
       if (senderId === bareAppId || senderId === `28:${bareAppId}`) {
         await next();
@@ -103,7 +234,7 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
       }
 
       const text = activity.text?.trim() || '';
-      const attachments = teamsAttachments(activity, (url) => this.downloadAttachment(url));
+      const attachments = teamsAttachments(activity, (url) => this.downloadAttachment(url, connection.id));
       const unsupported = teamsUnsupportedContent(activity);
       if (!text && !attachments && !unsupported) {
         await next();
@@ -111,6 +242,10 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
       }
 
       const teamsChannelId = activity.channelData?.channel?.id || activity.conversation?.id;
+      if (!this.acceptsChannel(context, teamsChannelId)) {
+        await next();
+        return;
+      }
       const teamsTeamId = activity.channelData?.team?.id || '';
 
       const sender: UserIdentity = {
@@ -142,11 +277,12 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
     // 2. Edits and (soft) deletes of channel messages
     this.onTeamsMessageEditEvent(async (context: TurnContext, next) => {
       const activity = context.activity;
+      const connectionId = this.connectionOf(context).id;
       const text = activity.text?.trim() || '';
-      const attachments = teamsAttachments(activity, (url) => this.downloadAttachment(url));
+      const attachments = teamsAttachments(activity, (url) => this.downloadAttachment(url, connectionId));
+      const teamsChannelId = this.channelIdOf(activity);
       // Attachment-only edits are relayed too; BridgeCore drops them if syncFiles is off
-      if (activity.id && (text || attachments)) {
-        const teamsChannelId = this.channelIdOf(activity);
+      if (activity.id && (text || attachments) && this.acceptsChannel(context, teamsChannelId)) {
         await this.bridge.handleIncomingEdit({
           id: `teams-edit-${teamsChannelId}-${activity.id}`,
           sourcePlatform: 'teams',
@@ -170,10 +306,11 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
 
     this.onTeamsMessageSoftDeleteEvent(async (context: TurnContext, next) => {
       const activity = context.activity;
-      if (activity.id) {
+      const teamsChannelId = this.channelIdOf(activity);
+      if (activity.id && this.acceptsChannel(context, teamsChannelId)) {
         await this.bridge.handleIncomingDelete({
           sourcePlatform: 'teams',
-          sourceChannelId: this.channelIdOf(activity),
+          sourceChannelId: teamsChannelId,
           sourceMessageId: activity.id,
           senderId: activity.from?.id,
         });
@@ -188,7 +325,7 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
       const messageId = activity.replyToId || activity.id || '';
       const teamsChannelId = this.channelIdOf(activity);
       // Outside a channel (or if Teams omits ids) there's nothing to key the reaction to
-      if (!messageId || !teamsChannelId) return;
+      if (!messageId || !teamsChannelId || !this.acceptsChannel(context, teamsChannelId)) return;
 
       for (const r of reactions || []) {
         await this.bridge.handleIncomingReaction({
@@ -246,17 +383,18 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
   /**
    * Resolve the service URL to use when posting proactively to a Teams channel.
    */
-  resolveServiceUrl(channelId: string, teamId?: string): string {
+  resolveServiceUrl(channelId: string, teamId?: string, connectionId?: string): string {
     const cached = this.serviceUrlMap.get(channelId);
     if (cached) return cached;
 
-    const stored = this.bridge.db.findTeamsServiceUrl(channelId, teamId);
+    const connection = this.connections.get(connectionId || this.defaultConnectionId);
+    const stored = this.bridge.db.findTeamsServiceUrl(channelId, teamId, connection?.config.appTenantId);
     if (stored) {
       this.serviceUrlMap.set(channelId, stored);
       return stored;
     }
 
-    const fallback = this.config.serviceUrl || 'https://smba.trafficmanager.net/amer/';
+    const fallback = connection?.config.serviceUrl || this.fallbackServiceUrl;
     if (!this.warnedFallbackChannels.has(channelId)) {
       this.warnedFallbackChannels.add(channelId);
       console.warn(
@@ -283,12 +421,13 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
     }
 
     // Proactive posts ignore replyToId in channels; the thread is addressed via the conversation id
+    const connection = this.connectionFor(mapping);
     const conversationReference = this.conversationReference(targetChannelId, mapping, parentMessageId);
 
     let sentMessageId = '';
 
-    await this.adapter.continueConversationAsync(
-      this.botAppId,
+    await connection.cloudAdapter.continueConversationAsync(
+      connection.config.appId,
       conversationReference,
       async (turnContext) => {
         const response = await turnContext.sendActivity(activity);
@@ -315,8 +454,9 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
     const activity = this.buildActivity(message, mapping, options?.footer);
     activity.id = targetMessageId;
 
-    await this.adapter.continueConversationAsync(
-      this.botAppId,
+    const connection = this.connectionFor(mapping);
+    await connection.cloudAdapter.continueConversationAsync(
+      connection.config.appId,
       this.conversationReference(targetChannelId, mapping, threadRootId ?? targetMessageId),
       async (turnContext) => {
         await turnContext.updateActivity(activity);
@@ -333,8 +473,9 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
     mapping: ChannelMapping,
     threadRootId?: string
   ): Promise<void> {
-    await this.adapter.continueConversationAsync(
-      this.botAppId,
+    const connection = this.connectionFor(mapping);
+    await connection.cloudAdapter.continueConversationAsync(
+      connection.config.appId,
       this.conversationReference(targetChannelId, mapping, threadRootId ?? targetMessageId),
       async (turnContext) => {
         await turnContext.deleteActivity(targetMessageId);
@@ -367,15 +508,11 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
    * Download an inline Teams image using the bot's own Bot Framework token. Only Microsoft
    * attachment hosts are allowed, so the token is never sent to a URL supplied in a message.
    */
-  async downloadAttachment(url: string): Promise<Buffer> {
+  async downloadAttachment(url: string, connectionId = this.defaultConnectionId): Promise<Buffer> {
     if (!isTeamsAttachmentHost(url)) throw new Error('refusing to send bot credentials to a non-Teams host');
 
-    // Single-tenant bots get their token from their own tenant rather than botframework.com
-    const credentials = new MicrosoftAppCredentials(
-      this.config.appId,
-      this.config.appPassword || '',
-      this.config.appType === 'SingleTenant' ? this.config.appTenantId : undefined
-    );
+    // Use the bot the message arrived through: other tenants' bots can't read this tenant's files
+    const credentials = teamsCredentials(this.requireConnection(connectionId).config);
     const token = await credentials.getToken();
     const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
     if (!res.ok) throw new Error(`Teams attachment download failed: HTTP ${res.status}`);
@@ -397,8 +534,9 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
     threadRootId: string
   ): Promise<{ messageId: string }> {
     let messageId = '';
-    await this.adapter.continueConversationAsync(
-      this.botAppId,
+    const connection = this.connectionFor(mapping);
+    await connection.cloudAdapter.continueConversationAsync(
+      connection.config.appId,
       this.conversationReference(targetChannelId, mapping, threadRootId),
       async (turnContext) => {
         const response = await turnContext.sendActivity(MessageFactory.text(text));
@@ -436,8 +574,9 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
   ): Promise<void> {
     const activity = MessageFactory.text(text);
     activity.id = noticeId;
-    await this.adapter.continueConversationAsync(
-      this.botAppId,
+    const connection = this.connectionFor(mapping);
+    await connection.cloudAdapter.continueConversationAsync(
+      connection.config.appId,
       this.conversationReference(targetChannelId, mapping, threadRootId),
       async (turnContext) => {
         await turnContext.updateActivity(activity);
@@ -456,7 +595,7 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
   ): Partial<ConversationReference> {
     return {
       channelId: 'msteams',
-      serviceUrl: this.resolveServiceUrl(channelId, mapping.teams.teamId),
+      serviceUrl: this.resolveServiceUrl(channelId, mapping.teams.teamId, this.connectionFor(mapping).id),
       conversation: {
         id: threadRootId ? `${channelId};messageid=${threadRootId}` : channelId,
         isGroup: true,
@@ -472,11 +611,31 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
   }
 
   /**
-   * Handle incoming Bot Framework HTTP requests from Azure Bot Service.
+   * Handle an incoming Bot Framework HTTP request for a connection. The connection's adapter
+   * validates the Azure-issued JWT against that bot's App ID before any handler runs.
    */
-  async processHttpRequest(req: unknown, res: unknown): Promise<void> {
-    await this.adapter.process(req as any, res as any, (context) => this.run(context));
+  async processHttpRequest(req: unknown, res: unknown, connectionId = this.defaultConnectionId): Promise<void> {
+    const connection = this.requireConnection(connectionId);
+    await connection.cloudAdapter.process(req as any, res as any, (context) => this.runForConnection(context, connection.id));
   }
+
+  /** Run the activity handlers for a turn that arrived on the given connection. */
+  async runForConnection(context: TurnContext, connectionId: string): Promise<void> {
+    context.turnState.set(CONNECTION_KEY, this.requireConnection(connectionId));
+    await this.run(context);
+  }
+}
+
+/**
+ * Bot Framework credentials for a bot. Single-tenant bots get their token from their own tenant
+ * rather than botframework.com.
+ */
+export function teamsCredentials(config: TeamsAdapterConfig): MicrosoftAppCredentials {
+  return new MicrosoftAppCredentials(
+    config.appId,
+    config.appPassword || '',
+    config.appType === 'SingleTenant' ? config.appTenantId : undefined
+  );
 }
 
 /**

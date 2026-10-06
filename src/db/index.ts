@@ -31,6 +31,23 @@ export interface MessageMappingRecord {
   createdAt?: string;
 }
 
+/** A Teams connection as stored: one Azure Bot registration, usually one Microsoft 365 tenant. */
+export interface TeamsConnectionRecord {
+  id: string;
+  name: string;
+  appId: string;
+  /** Client secret, encrypted with CredentialCipher */
+  appPasswordEnc: string;
+  tenantId?: string;
+  appType: 'SingleTenant' | 'MultiTenant';
+  serviceUrl?: string;
+  /** ISO date the client secret expires, if the operator recorded it */
+  secretExpiresAt?: string;
+  enabled: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface ReactionRecord {
   emoji: string;
   userId: string;
@@ -60,9 +77,9 @@ export class BridgeDatabase {
       INSERT INTO channel_mappings (
         id, name, enabled,
         slack_channel_id, slack_channel_name,
-        teams_team_id, teams_channel_id, teams_team_name, teams_channel_name,
+        teams_team_id, teams_channel_id, teams_team_name, teams_channel_name, teams_connection_id,
         options, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         enabled = excluded.enabled,
@@ -72,6 +89,7 @@ export class BridgeDatabase {
         teams_channel_id = excluded.teams_channel_id,
         teams_team_name = excluded.teams_team_name,
         teams_channel_name = excluded.teams_channel_name,
+        teams_connection_id = excluded.teams_connection_id,
         options = excluded.options,
         updated_at = datetime('now')
     `);
@@ -86,6 +104,7 @@ export class BridgeDatabase {
       mapping.teams.channelId,
       mapping.teams.teamName || null,
       mapping.teams.channelName || null,
+      mapping.teams.connectionId || null,
       JSON.stringify(mapping.options),
       mapping.createdAt || new Date().toISOString()
     );
@@ -115,6 +134,20 @@ export class BridgeDatabase {
     return row ? this.rowToMapping(row) : null;
   }
 
+  /**
+   * Number of channel mappings using a Teams connection. `includeUnassigned` also counts mappings
+   * with no connection id, which belong to the TEAMS_APP_ID connection.
+   */
+  countMappingsForTeamsConnection(connectionId: string, includeUnassigned = false): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM channel_mappings
+         WHERE teams_connection_id = ? OR (? AND teams_connection_id IS NULL)`
+      )
+      .get(connectionId, includeUnassigned ? 1 : 0) as { n: number };
+    return row.n;
+  }
+
   deleteChannelMapping(id: string): boolean {
     const res = this.db.prepare('DELETE FROM channel_mappings WHERE id = ?').run(id);
     return res.changes > 0;
@@ -134,6 +167,7 @@ export class BridgeDatabase {
         channelId: r.teams_channel_id as string,
         teamName: (r.teams_team_name as string) || undefined,
         channelName: (r.teams_channel_name as string) || undefined,
+        connectionId: (r.teams_connection_id as string) || undefined,
       },
       // Merge over defaults so option keys added after a mapping was saved get sensible values
       options: { ...DEFAULT_MAPPING_OPTIONS, ...JSON.parse(r.options as string) },
@@ -274,6 +308,62 @@ export class BridgeDatabase {
     return res.changes;
   }
 
+  // --- Teams Connection Methods ---
+
+  saveTeamsConnection(record: TeamsConnectionRecord): void {
+    this.db
+      .prepare(
+        `INSERT INTO teams_connections (
+           id, name, app_id, app_password_enc, tenant_id, app_type, service_url, secret_expires_at, enabled, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(id) DO UPDATE SET
+           name = excluded.name,
+           app_id = excluded.app_id,
+           app_password_enc = excluded.app_password_enc,
+           tenant_id = excluded.tenant_id,
+           app_type = excluded.app_type,
+           service_url = excluded.service_url,
+           secret_expires_at = excluded.secret_expires_at,
+           enabled = excluded.enabled,
+           updated_at = datetime('now')`
+      )
+      .run(
+        record.id,
+        record.name,
+        record.appId,
+        record.appPasswordEnc,
+        record.tenantId || null,
+        record.appType,
+        record.serviceUrl || null,
+        record.secretExpiresAt || null,
+        record.enabled ? 1 : 0
+      );
+  }
+
+  getTeamsConnection(id: string): TeamsConnectionRecord | null {
+    const row = this.db.prepare('SELECT * FROM teams_connections WHERE id = ?').get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? rowToTeamsConnection(row) : null;
+  }
+
+  getAllTeamsConnections(): TeamsConnectionRecord[] {
+    const rows = this.db.prepare('SELECT * FROM teams_connections ORDER BY name').all() as Record<string, unknown>[];
+    return rows.map(rowToTeamsConnection);
+  }
+
+  deleteTeamsConnection(id: string): boolean {
+    return this.db.prepare('DELETE FROM teams_connections WHERE id = ?').run(id).changes > 0;
+  }
+
+  /** When the bridge last received any activity from a tenant (ISO-ish SQLite datetime, UTC). */
+  lastTeamsActivityForTenant(tenantId: string): string | undefined {
+    const row = this.db
+      .prepare('SELECT MAX(updated_at) AS t FROM teams_conversations WHERE tenant_id = ?')
+      .get(tenantId) as { t: string | null };
+    return row.t || undefined;
+  }
+
   // --- Teams Service URL Methods ---
 
   saveTeamsServiceUrl(conversationId: string, serviceUrl: string, teamId?: string, tenantId?: string): void {
@@ -292,10 +382,11 @@ export class BridgeDatabase {
 
   /**
    * Find the best-known service URL for a Teams channel: exact conversation, then any
-   * conversation in the same team, then the most recently seen URL (service URLs are
-   * per-tenant region, and most deployments bridge a single tenant).
+   * conversation in the same team, then the most recently seen URL. Service URLs are per-tenant
+   * region, so when `tenantId` is given the last step only considers that tenant (plus rows
+   * recorded without a tenant), never another tenant's region.
    */
-  findTeamsServiceUrl(conversationId: string, teamId?: string): string | undefined {
+  findTeamsServiceUrl(conversationId: string, teamId?: string, tenantId?: string): string | undefined {
     const exact = this.db
       .prepare('SELECT service_url FROM teams_conversations WHERE conversation_id = ?')
       .get(conversationId) as { service_url: string } | undefined;
@@ -310,9 +401,16 @@ export class BridgeDatabase {
       if (team) return team.service_url;
     }
 
-    const latest = this.db
-      .prepare('SELECT service_url FROM teams_conversations ORDER BY updated_at DESC LIMIT 1')
-      .get() as { service_url: string } | undefined;
+    const latest = (
+      tenantId
+        ? this.db
+            .prepare(
+              `SELECT service_url FROM teams_conversations WHERE tenant_id = ? OR tenant_id IS NULL
+               ORDER BY tenant_id IS NULL, updated_at DESC LIMIT 1`
+            )
+            .get(tenantId)
+        : this.db.prepare('SELECT service_url FROM teams_conversations ORDER BY updated_at DESC LIMIT 1').get()
+    ) as { service_url: string } | undefined;
     return latest?.service_url;
   }
 
@@ -354,6 +452,22 @@ export class BridgeDatabase {
   close(): void {
     this.db.close();
   }
+}
+
+function rowToTeamsConnection(r: Record<string, unknown>): TeamsConnectionRecord {
+  return {
+    id: r.id as string,
+    name: r.name as string,
+    appId: r.app_id as string,
+    appPasswordEnc: r.app_password_enc as string,
+    tenantId: (r.tenant_id as string) || undefined,
+    appType: r.app_type === 'MultiTenant' ? 'MultiTenant' : 'SingleTenant',
+    serviceUrl: (r.service_url as string) || undefined,
+    secretExpiresAt: (r.secret_expires_at as string) || undefined,
+    enabled: Boolean(r.enabled),
+    createdAt: r.created_at as string,
+    updatedAt: r.updated_at as string,
+  };
 }
 
 /** Store attachment metadata only; `fetchContent` is a transient download function. */

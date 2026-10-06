@@ -5,8 +5,10 @@
 
 import { SLACK_EVENTS_PATH, SlackAdapter } from './adapters/slack/client.js';
 import { TeamsAdapter } from './adapters/teams/client.js';
+import { TeamsConnectionStore } from './adapters/teams/connections.js';
 import { config } from './config.js';
 import { BridgeCore } from './core/bridge.js';
+import { CredentialCipher } from './core/credentials.js';
 import { MediaSigner } from './core/media.js';
 import { createWebServer } from './web/server.js';
 
@@ -71,24 +73,48 @@ async function bootstrap() {
     console.log('ℹ️ No SLACK_BOT_TOKEN provided. Running in configuration/API mode.');
   }
 
-  // 3. Initialize Teams Adapter (if configured)
-  let teamsAdapter: TeamsAdapter | undefined;
-  if (config.TEAMS_APP_ID) {
-    console.log('⚡ Starting Teams adapter...');
-    teamsAdapter = new TeamsAdapter(
-      {
-        appId: config.TEAMS_APP_ID,
-        appPassword: config.TEAMS_APP_PASSWORD,
-        appTenantId: config.TEAMS_TENANT_ID,
-        appType: config.TEAMS_APP_TYPE,
-        serviceUrl: config.TEAMS_SERVICE_URL,
-      },
-      bridge
-    );
-    bridge.registerAdapter(teamsAdapter);
-    console.log('✅ Teams adapter initialized and listening for activities.');
+  // 3. Initialize the Teams Adapter: the TEAMS_APP_ID bot (if set) plus any connections stored
+  // in the database, one per Microsoft 365 tenant. With none, it still runs so connections can
+  // be added from the dashboard.
+  const teamsAdapter = new TeamsAdapter(
+    config.TEAMS_APP_ID
+      ? {
+          appId: config.TEAMS_APP_ID,
+          appPassword: config.TEAMS_APP_PASSWORD,
+          appTenantId: config.TEAMS_TENANT_ID,
+          appType: config.TEAMS_APP_TYPE,
+        }
+      : undefined,
+    bridge,
+    { defaultConnectionId: config.TEAMS_CONNECTION_ID, serviceUrl: config.TEAMS_SERVICE_URL }
+  );
+  bridge.registerAdapter(teamsAdapter);
+
+  const teamsConnections = new TeamsConnectionStore(
+    bridge.db,
+    teamsAdapter,
+    config.CREDENTIALS_KEY ? new CredentialCipher(config.CREDENTIALS_KEY) : undefined,
+    config.TEAMS_APP_ID
+      ? {
+          id: config.TEAMS_CONNECTION_ID,
+          appId: config.TEAMS_APP_ID,
+          tenantId: config.TEAMS_TENANT_ID,
+          appType: config.TEAMS_APP_TYPE,
+        }
+      : undefined
+  );
+  if (teamsConnections.canStore) {
+    const { loaded, failed } = teamsConnections.loadAll();
+    if (loaded.length) console.log(`✅ Loaded Teams connections: ${loaded.join(', ')}`);
+    for (const f of failed) console.error(`❌ Teams connection "${f.id}" failed to load: ${f.error}`);
+  } else if (bridge.db.getAllTeamsConnections().length > 0) {
+    console.error('❌ Teams connections are stored in the database, but CREDENTIALS_KEY is not set. They are inactive.');
+  }
+
+  if (teamsAdapter.connectionCount > 0) {
+    console.log(`✅ Teams adapter listening for ${teamsAdapter.connectionCount} connection(s).`);
   } else {
-    console.log('ℹ️ No TEAMS_APP_ID provided. Running in configuration/API mode.');
+    console.log('ℹ️ No Teams connections configured. Running in configuration/API mode.');
   }
 
   if (config.ADMIN_PASSWORD === 'admin') {
@@ -106,6 +132,7 @@ async function bootstrap() {
     mediaSigner,
     slackAdapter,
     teamsAdapter,
+    teamsConnections,
   });
 
   const server = app.listen(config.PORT, config.HOST, () => {

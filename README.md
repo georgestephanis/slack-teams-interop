@@ -14,6 +14,7 @@ It runs as a single Node.js service (or Docker container) with a SQLite database
 ## Key Features
 
 - **Two-way messaging** between each pair of mapped Slack and Teams channels.
+- **Several Microsoft 365 tenants from one instance**: each organization registers its own Azure Bot, added in the dashboard as a **Teams connection** with its own messaging endpoint and Teams app package. One Slack app serves all of them.
 - **Team Owner install in Teams (Resource-Specific Consent)**: the Teams side uses `ChannelMessage.Read.Group`, which a **Team Owner** grants for one team. It doesn't need tenant-wide admin permissions such as `ChannelMessage.Read.All`.
 - **Sender identity**:
   - **In Slack**, Teams messages show the sender's name and avatar (`chat:write.customize`).
@@ -46,7 +47,7 @@ See [Limitations](#limitations) for what isn't supported.
 |   +-----------------------------------------------------------------------+   |
 |   |                  HTTP server (one port, default 3978)                 |   |
 |   |  Public (platform-authenticated):                                     |   |
-|   |   - /api/messages      Teams Bot Framework webhook (Azure JWT)        |   |
+|   |   - /api/messages[/id] Teams Bot Framework webhooks (Azure JWT)       |   |
 |   |   - /slack/events      Slack Events API, HTTP mode only (signature)   |   |
 |   |   - /media/slack/...   Signed Slack image proxy (opt-in)              |   |
 |   |   - /api/health/live   Liveness probe                                 |   |

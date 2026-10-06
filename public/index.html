@@ -132,6 +132,34 @@
       </section>
     </main>
 
+    <!-- Teams Connections: one Azure Bot per Microsoft 365 tenant -->
+    <section class="card connections-card">
+      <div class="card-header">
+        <h2>Teams Connections</h2>
+        <button class="btn btn-sm btn-outline" id="btn-add-connection">Add Connection</button>
+      </div>
+      <p class="card-intro">Each connection is one Azure Bot, registered in the Microsoft 365 tenant whose Teams you're bridging. Give each tenant its own messaging endpoint and Teams app package from this list.</p>
+      <p class="warn-note hidden" id="connections-keyless">Set <code>CREDENTIALS_KEY</code> to add connections here. Their client secrets are stored encrypted with it.</p>
+      <div class="table-container">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Connection</th>
+              <th>Messaging Endpoint</th>
+              <th>Bridges</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="connections-tbody">
+            <tr>
+              <td colspan="5" class="empty-state">No Teams connections yet.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <footer class="app-footer">
       InterBridge is free software under the
       <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener">GNU AGPL v3 or later</a>.
@@ -156,16 +184,14 @@
           <div class="step-badge">2</div>
           <div class="step-info">
             <h3>Teams App (RSC Consent)</h3>
-            <p>Deploy the custom Teams App zip containing <code>ChannelMessage.Read.Group</code> permission so Team Owners can install it without tenant Global Admin approval.</p>
-            <a href="/api/manifests/teams" target="_blank" class="btn btn-sm btn-outline">Download Teams App Package</a>
+            <p>Each connection has its own Teams app package (download it from <strong>Teams Connections</strong>), carrying that bot's ID and the <code>ChannelMessage.Read.Group</code> permission, so a Team Owner can install it without tenant-wide admin approval.</p>
           </div>
         </div>
         <div class="guide-step">
           <div class="step-badge">3</div>
           <div class="step-info">
             <h3>Azure Bot Service (Free F0)</h3>
-            <p>Register a free Azure AI Bot with your Messaging endpoint set to <code>https://your-domain/api/messages</code>.</p>
-            <button class="btn btn-sm btn-outline" id="btn-copy-webhook">Copy Webhook URL</button>
+            <p>Register a free (F0), single-tenant Azure Bot in the tenant being bridged, with its Messaging endpoint set to that connection's URL from <strong>Teams Connections</strong>.</p>
           </div>
         </div>
       </div>
@@ -197,6 +223,12 @@
             <label for="slack-channel-name">Slack Channel Name</label>
             <input type="text" id="slack-channel-name" class="form-control" placeholder="#project-acme">
           </div>
+        </div>
+
+        <div class="form-group">
+          <label for="teams-connection-id">Teams Connection</label>
+          <select id="teams-connection-id" class="form-control"></select>
+          <small>The Azure Bot (and Microsoft 365 tenant) the Teams channel belongs to</small>
         </div>
 
         <div class="form-row">
@@ -245,6 +277,64 @@
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" id="btn-modal-cancel">Cancel</button>
           <button type="submit" class="btn btn-primary" id="btn-modal-save">Save Bridge</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Add / Edit Teams Connection -->
+  <div class="modal-overlay hidden" id="modal-connection">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="connection-modal-title">New Teams Connection</h3>
+        <button class="btn-close" id="btn-connection-close">&times;</button>
+      </div>
+      <form id="form-connection">
+        <div class="form-row">
+          <div class="form-group col">
+            <label for="connection-name">Name</label>
+            <input type="text" id="connection-name" class="form-control" placeholder="e.g. Acme Corp" required>
+          </div>
+          <div class="form-group col">
+            <label for="connection-id">ID</label>
+            <input type="text" id="connection-id" class="form-control" placeholder="e.g. acme" pattern="[a-z0-9][a-z0-9-]{0,62}" required>
+            <small>Lowercase slug. Becomes the endpoint <code>/api/messages/&lt;id&gt;</code> and can't be changed later.</small>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group col">
+            <label for="connection-app-id">Microsoft App ID</label>
+            <input type="text" id="connection-app-id" class="form-control" required>
+          </div>
+          <div class="form-group col">
+            <label for="connection-tenant-id">App Tenant ID</label>
+            <input type="text" id="connection-tenant-id" class="form-control" required>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group col">
+            <label for="connection-secret">Client Secret Value</label>
+            <input type="password" id="connection-secret" class="form-control" autocomplete="new-password">
+            <small id="connection-secret-help">Stored encrypted. Never shown again.</small>
+          </div>
+          <div class="form-group col">
+            <label for="connection-expires">Secret Expires</label>
+            <input type="date" id="connection-expires" class="form-control">
+            <small>The dashboard warns 30 days before.</small>
+          </div>
+        </div>
+
+        <div class="form-group options-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="connection-enabled" checked> Enabled
+          </label>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="btn-connection-cancel">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Connection</button>
         </div>
       </form>
     </div>

@@ -68,11 +68,17 @@ Which organization should host the InterBridge instance depends on which platfor
 | **Teams service URLs** | **YES** | The Bot Framework region endpoint for each Teams channel and team. Kept until removed. |
 | **User profile cache** | **YES** | Slack display names, avatar URLs and emails, cached to avoid Slack API rate limits. Kept until overwritten. |
 | **Database backups** | **YES** | Before a schema upgrade, the bridge writes `<DATABASE_PATH>.bak-v<N>` next to the database. **These backups contain the data above and are not pruned**; delete them once an upgrade is confirmed. |
-| **Credentials & tokens** | **YES** | Environment variables (`.env`) hold the Slack tokens, the Azure bot secret, `ADMIN_PASSWORD` and `MEDIA_PROXY_SECRET`. Never commit `.env`. |
+| **Credentials & tokens** | **YES** | Environment variables (`.env`) hold the Slack tokens, the Azure bot secret, `ADMIN_PASSWORD`, `MEDIA_PROXY_SECRET` and `CREDENTIALS_KEY`. Never commit `.env`. The client secrets of **Teams connections added in the dashboard** are stored in the SQLite database (`teams_connections`), encrypted with AES-256-GCM using a key derived from `CREDENTIALS_KEY`. They're never returned by the API. Migration backups (`.bak-v<N>`) contain the same encrypted values. |
 | **Copies on the other platform** | **YES** (by design) | Relayed messages and images copied from Teams into Slack live on in Slack and Teams under those platforms' own retention policies. Deleting the bridge doesn't remove them. |
 | **Dashboard activity log** | **No** | The dashboard's activity panel only lists actions taken in that browser tab. |
 
 ---
+
+### Bridging several tenants from one instance
+
+With more than one Teams connection, one instance holds the credentials of every bridged organization's bot, and its database holds their messages. **Anyone who compromises the instance, or obtains both its database and `CREDENTIALS_KEY`, can act as each of those bots** in the team where it's installed. If organizations must be isolated from each other, run a separate instance for each one instead.
+
+Each connection's bot is still limited by RSC to the one team where it's installed. Its client secret expires on the date set in Azure (at most 24 months); the dashboard warns 30 days ahead if you record the expiry date.
 
 ## 4. Network Surface
 
@@ -80,7 +86,7 @@ Everything is served on one port (`PORT`, default 3978):
 
 | Path | Who calls it | Authentication |
 | :--- | :--- | :--- |
-| `/api/messages` | Azure Bot Service (Teams) | Bot Framework JWT, validated by the SDK |
+| `/api/messages`, `/api/messages/<connection>` | Azure Bot Service (Teams) | Bot Framework JWT, validated by the SDK against that connection's bot. Activities from another tenant, or for a channel bridged through a different connection, are dropped. |
 | `/slack/events` | Slack, **HTTP mode only** | Slack request signature (`SLACK_SIGNING_SECRET`) |
 | `/media/slack/<token>` | Teams clients, **only if `MEDIA_PROXY_SECRET` is set** | HMAC-signed capability URL (see below) |
 | `/api/health/live` | Health checks | None (returns only `{"status":"ok"}`) |
@@ -108,4 +114,4 @@ Everything is served on one port (`PORT`, default 3978):
    - With Docker Compose, keep InterBridge on an internal Docker network and expose port 3978 only to your reverse proxy.
 5. **Protect the data directory**:
    - `DATABASE_PATH` (default `./data/`) holds message text for the retention period, plus any upgrade backups. Restrict access to it, include it in your backup policy deliberately, and lower `MESSAGE_RETENTION_DAYS` if you need less history. Threads, edits and reactions only work within that window.
-6. **Rotate secrets** if they may have leaked: the Slack tokens, the Azure client secret, `ADMIN_PASSWORD`, and `MEDIA_PROXY_SECRET` (which also revokes existing image links).
+6. **Rotate secrets** if they may have leaked: the Slack tokens, the Azure client secrets (each Teams connection's, in Azure, then re-entered in the dashboard), `ADMIN_PASSWORD`, and `MEDIA_PROXY_SECRET` (which also revokes existing image links). Changing `CREDENTIALS_KEY` makes stored connection secrets unreadable, so re-enter each one after changing it.

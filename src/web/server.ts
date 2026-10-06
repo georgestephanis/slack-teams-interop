@@ -6,11 +6,12 @@
 import express, { NextFunction, Request, Response } from 'express';
 import crypto from 'node:crypto';
 import path from 'node:path';
-import fs from 'node:fs';
 import { BridgeCore } from '../core/bridge.js';
 import { MAX_TRANSFER_BYTES, MEDIA_PROXY_PATH, MediaSigner } from '../core/media.js';
 import { SLACK_EVENTS_PATH, SlackAdapter } from '../adapters/slack/client.js';
 import { TeamsAdapter } from '../adapters/teams/client.js';
+import { TeamsConnectionError, TeamsConnectionInput, TeamsConnectionStore } from '../adapters/teams/connections.js';
+import { buildTeamsAppPackage, buildTeamsManifest } from '../adapters/teams/manifest.js';
 import { ChannelMapping } from '../core/types.js';
 
 export interface ServerOptions {
@@ -25,32 +26,47 @@ export interface ServerOptions {
   slackSocketMode?: boolean;
   slackAdapter?: SlackAdapter;
   teamsAdapter?: TeamsAdapter;
+  /** Teams connections stored in the database (one Azure Bot per Microsoft 365 tenant) */
+  teamsConnections?: TeamsConnectionStore;
   /** Enables the signed Slack image proxy (needs MEDIA_PROXY_SECRET and PUBLIC_URL) */
   mediaSigner?: MediaSigner;
 }
 
 export function createWebServer(options: ServerOptions) {
   const app = express();
-  const { bridge, slackAdapter, teamsAdapter } = options;
+  const { bridge, slackAdapter, teamsAdapter, teamsConnections } = options;
 
   let relayedCount = 0;
   bridge.on('message:relayed', () => {
     relayedCount++;
   });
 
-  // 1. Teams Bot Framework Endpoint (/api/messages)
-  // Must use raw body or let botbuilder adapter parse JSON
-  app.post('/api/messages', async (req: Request, res: Response) => {
-    if (!teamsAdapter) {
+  // 1. Teams Bot Framework Endpoints. `/api/messages` serves the TEAMS_APP_ID connection;
+  // `/api/messages/<connectionId>` serves any connection, so each tenant's Azure Bot gets its own
+  // messaging endpoint. Authenticated by the connection's Bot Framework adapter (Azure JWT), not
+  // admin auth. CloudAdapter requires an already-parsed JSON body, and the global express.json()
+  // is mounted after admin auth, so these routes need their own parser.
+  const teamsBody = express.json({ limit: '1mb' });
+  const handleTeamsWebhook = async (req: Request, res: Response, connectionId?: string) => {
+    if (!teamsAdapter || teamsAdapter.connectionCount === 0) {
       res.status(503).json({ error: 'Teams adapter not configured' });
       return;
     }
+    const id = connectionId ?? teamsAdapter.defaultConnectionId;
+    if (!teamsAdapter.hasConnection(id)) {
+      res.status(404).json({ error: 'Unknown Teams connection' });
+      return;
+    }
     try {
-      await teamsAdapter.processHttpRequest(req, res);
+      await teamsAdapter.processHttpRequest(req, res, id);
     } catch (err: any) {
       res.status(500).send(err.message);
     }
-  });
+  };
+  app.post('/api/messages', teamsBody, (req: Request, res: Response) => handleTeamsWebhook(req, res));
+  app.post('/api/messages/:connectionId', teamsBody, (req: Request, res: Response) =>
+    handleTeamsWebhook(req, res, String(req.params.connectionId))
+  );
 
   // Slack Events API endpoint (HTTP mode only). Authenticated by Slack's signing secret, and
   // must see the raw body, so it is mounted before admin auth and express.json().
@@ -136,7 +152,8 @@ export function createWebServer(options: ServerOptions) {
         socketMode: slackAdapter?.socketMode ?? false,
       },
       teams: {
-        configured: Boolean(teamsAdapter),
+        configured: Boolean(teamsAdapter && teamsAdapter.connectionCount > 0),
+        connections: teamsAdapter?.connectionCount ?? 0,
         rscSupported: true,
       },
     });
@@ -163,6 +180,23 @@ export function createWebServer(options: ServerOptions) {
       res.status(400).json({ error: 'Missing required mapping fields' });
       return;
     }
+    const connectionId = data.teams.connectionId || undefined;
+    if (connectionId && !teamsConnections?.exists(connectionId)) {
+      res.status(400).json({ error: `Unknown Teams connection: ${connectionId}` });
+      return;
+    }
+    // Without TEAMS_APP_ID there's no default connection to fall back to
+    if (!connectionId && teamsAdapter && teamsConnections?.list().length && !teamsConnections.exists(teamsAdapter.defaultConnectionId)) {
+      res.status(400).json({ error: 'Choose the Teams connection this channel belongs to' });
+      return;
+    }
+    // One Teams channel belongs to exactly one tenant, so it may only be bridged through one connection
+    const existing = bridge.db.findMappingByTeamsChannel(data.teams.channelId);
+    if (existing && existing.id !== data.id && (existing.teams.connectionId || undefined) !== connectionId) {
+      res.status(409).json({ error: 'This Teams channel is already bridged through a different connection' });
+      return;
+    }
+    data.teams.connectionId = connectionId;
     bridge.db.saveChannelMapping(data);
     res.status(201).json(data);
   });
@@ -215,6 +249,69 @@ export function createWebServer(options: ServerOptions) {
     }
   });
 
+  // --- Teams connections (one Azure Bot per Microsoft 365 tenant) ---
+
+  const sendConnectionError = (res: Response, err: unknown) => {
+    if (err instanceof TeamsConnectionError) {
+      res.status(err.status).json({ error: err.message });
+    } else {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  };
+
+  // List connections with their webhook URL and usage. Secrets are never returned.
+  app.get('/api/teams-connections', (_req: Request, res: Response) => {
+    if (!teamsConnections) {
+      res.json({ canStore: false, connections: [] });
+      return;
+    }
+    const base = options.publicUrl || '';
+    res.json({
+      canStore: teamsConnections.canStore,
+      connections: teamsConnections.list().map((c) => ({
+        ...c,
+        messagingEndpoint: `${base}/api/messages/${c.id}`,
+        bridges: bridge.db.countMappingsForTeamsConnection(c.id, c.id === teamsAdapter?.defaultConnectionId),
+        lastActivityAt: c.tenantId ? bridge.db.lastTeamsActivityForTenant(c.tenantId) : undefined,
+      })),
+    });
+  });
+
+  // Create or update a connection (omit appPassword on update to keep the stored secret)
+  app.post('/api/teams-connections', (req: Request, res: Response) => {
+    if (!teamsConnections) {
+      res.status(503).json({ error: 'Teams connections are unavailable' });
+      return;
+    }
+    try {
+      res.status(201).json(teamsConnections.save(req.body as TeamsConnectionInput));
+    } catch (err) {
+      sendConnectionError(res, err);
+    }
+  });
+
+  app.delete('/api/teams-connections/:id', (req: Request, res: Response) => {
+    try {
+      if (!teamsConnections) throw new TeamsConnectionError('connection not found', 404);
+      teamsConnections.delete(String(req.params.id));
+      res.json({ success: true });
+    } catch (err) {
+      sendConnectionError(res, err);
+    }
+  });
+
+  // Check credentials by requesting a Bot Framework token (does not contact Teams itself)
+  app.post('/api/teams-connections/:id/test', async (req: Request, res: Response) => {
+    try {
+      if (!teamsConnections) throw new TeamsConnectionError('connection not found', 404);
+      await teamsConnections.test(String(req.params.id));
+      res.json({ success: true, message: 'Credentials accepted by Microsoft' });
+    } catch (err) {
+      if (err instanceof TeamsConnectionError) sendConnectionError(res, err);
+      else res.status(502).json({ error: `Credentials rejected: ${err instanceof Error ? err.message : String(err)}` });
+    }
+  });
+
   // Generate Slack App Manifest JSON
   app.get('/api/manifests/slack', (req: Request, res: Response) => {
     // ?mode=http|socket overrides the running configuration
@@ -263,61 +360,28 @@ export function createWebServer(options: ServerOptions) {
     res.json(manifest);
   });
 
-  // Generate Teams App Manifest / Package
+  // Generate Teams App Manifest / Package. `?connection=<id>` builds it for that connection's
+  // bot (defaults to the TEAMS_APP_ID connection), so it installs as-is. With no connection
+  // configured, serves the placeholder template. `?json=1` returns just the manifest.
   app.get('/api/manifests/teams', (req: Request, res: Response) => {
-    const zipPath = path.resolve(process.cwd(), 'public', 'teams-app.zip');
-    if (!req.query.json && fs.existsSync(zipPath)) {
-      res.download(zipPath, 'interbridge-teams-app.zip');
+    const connectionId = req.query.connection ? String(req.query.connection) : teamsAdapter?.defaultConnectionId;
+    const connection = teamsConnections?.list().find((c) => c.id === connectionId);
+    if (req.query.connection && !connection) {
+      res.status(404).json({ error: 'Unknown Teams connection' });
+      return;
+    }
+    const manifestOptions = connection ? { botAppId: connection.appId, connectionName: connection.name } : {};
+
+    if (req.query.json) {
+      res.setHeader('Content-Disposition', 'attachment; filename="teams-manifest.json"');
+      res.json(buildTeamsManifest(manifestOptions));
       return;
     }
 
-    const manifest = {
-      $schema: 'https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json',
-      manifestVersion: '1.16',
-      version: '1.0.0',
-      id: 'e86b2d18-508b-4a57-897d-419b48c03632',
-      packageName: 'com.interbridge.teams',
-      developer: {
-        name: 'InterBridge Self-Hosted',
-        websiteUrl: 'https://github.com/georgestephanis/slack-teams-interop',
-        privacyUrl: 'https://github.com/georgestephanis/slack-teams-interop',
-        termsOfUseUrl: 'https://github.com/georgestephanis/slack-teams-interop',
-      },
-      icons: {
-        color: 'color.png',
-        outline: 'outline.png',
-      },
-      name: {
-        short: 'InterBridge',
-        full: 'InterBridge Slack-Teams Interop',
-      },
-      description: {
-        short: 'Two-way channel bridge connecting Microsoft Teams to Slack',
-        full: 'Bridges messages, threads, reactions, and files between Microsoft Teams and Slack channels using Resource-Specific Consent.',
-      },
-      accentColor: '#6366f1',
-      bots: [
-        {
-          botId: 'YOUR_MICROSOFT_APP_ID',
-          scopes: ['team'],
-          supportsFiles: true,
-          isNotificationOnly: false,
-        },
-      ],
-      authorization: {
-        permissions: {
-          resourceSpecific: [
-            {
-              name: 'ChannelMessage.Read.Group',
-              type: 'Application',
-            },
-          ],
-        },
-      },
-    };
-
-    res.setHeader('Content-Disposition', 'attachment; filename="teams-manifest.json"');
-    res.json(manifest);
+    const filename = connection ? `interbridge-teams-app-${connection.id}.zip` : 'interbridge-teams-app.zip';
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buildTeamsAppPackage(manifestOptions));
   });
 
   return app;

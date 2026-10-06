@@ -37,6 +37,14 @@ const envSchema = z.object({
   // Azure Bot registration type. New bots are SingleTenant; MultiTenant is kept for older registrations.
   TEAMS_APP_TYPE: z.enum(['SingleTenant', 'MultiTenant']).default('MultiTenant'),
   TEAMS_SERVICE_URL: z.string().default('https://smba.trafficmanager.net/amer/'),
+  // Id of the TEAMS_APP_ID connection: its webhook is /api/messages and /api/messages/<id>, and
+  // channel bridges without a connection use it
+  TEAMS_CONNECTION_ID: z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9-]{0,62}$/, 'TEAMS_CONNECTION_ID must be a lowercase slug')
+    .default('default'),
+  // Encrypts Teams connection secrets stored in the database (needed only to add connections in the dashboard)
+  CREDENTIALS_KEY: z.string().min(32, 'CREDENTIALS_KEY must be at least 32 characters').optional(),
 
   // Admin UI
   ADMIN_PASSWORD: z.string().min(1, 'ADMIN_PASSWORD must not be empty').default('admin'),

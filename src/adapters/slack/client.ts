@@ -110,11 +110,15 @@ export class SlackAdapter implements BridgeAdapter {
       );
     }
 
+    // Bolt verifies a token by calling auth.test from its constructor, and nothing awaits that
+    // call: a bad token became an unhandled rejection that could crash the process (and tests hit
+    // the real Slack API). start() runs auth.test in the normal startup path, so defer Bolt's check.
     if (isSocketMode) {
       this.app = new App({
         token: config.botToken,
         appToken: config.appToken,
         socketMode: true,
+        tokenVerificationEnabled: false,
         logLevel: LogLevel.WARN,
       });
     } else {
@@ -128,6 +132,7 @@ export class SlackAdapter implements BridgeAdapter {
       this.app = new App({
         token: config.botToken,
         receiver,
+        tokenVerificationEnabled: false,
         logLevel: LogLevel.WARN,
       });
     }
