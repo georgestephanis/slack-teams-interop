@@ -39,8 +39,9 @@ export function createWebServer(options: ServerOptions) {
   });
 
   // 1. Teams Bot Framework Endpoint (/api/messages)
-  // Must use raw body or let botbuilder adapter parse JSON
-  app.post('/api/messages', async (req: Request, res: Response) => {
+  // CloudAdapter requires an already-parsed JSON body. The global express.json() is mounted after
+  // admin auth, so this route needs its own parser.
+  app.post('/api/messages', express.json({ limit: '1mb' }), async (req: Request, res: Response) => {
     if (!teamsAdapter) {
       res.status(503).json({ error: 'Teams adapter not configured' });
       return;
