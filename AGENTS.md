@@ -25,7 +25,7 @@ npm run package:teams  # rebuild public/teams-app.zip from manifests/teams/
 docker compose up -d   # containerized run, persists to ./data
 ```
 
-Requires Node.js 22+ (`better-sqlite3` and the `@azure/*` packages need it; `.npmrc` sets `engine-strict`).
+Requires Node.js 22.22.2+ and npm 12+ (`better-sqlite3` and the `@azure/*` packages need Node 22; `.npmrc` sets `engine-strict` and `min-release-age=3`). Don't remove or lower `min-release-age`; it's a supply-chain guard. The Docker image pins its npm version via `NPM_VERSION` in the `Dockerfile`.
 
 Before proposing a change, run `npx tsc --noEmit` and `npm test`. Both are fast.
 

@@ -8,7 +8,7 @@ This guide walks you through setting up your self-hosted Slack <-> Microsoft Tea
 - A **Slack workspace** where you can create and install apps (or a Slack admin who can approve one).
 - A **Microsoft 365 tenant** where you are a **Team Owner** of the team to bridge, and where custom app uploads are allowed. Ask your Teams admin if **Upload a custom app** isn't available.
 - An **Azure subscription** for the Azure Bot registration. The free F0 tier is enough.
-- A server with **Docker**, or **Node.js 22+**.
+- A server with **Docker**, or **Node.js 22.22.2+ (or 24.15+) with npm 12+** (`npm install -g npm@12`). The repo's `.npmrc` sets a `min-release-age` supply-chain guard; see `SECURITY.md`.
 - A **public HTTPS URL** for the bridge (for example `https://bridge.example.com`), through a reverse proxy such as Caddy or Nginx, or a Cloudflare Tunnel. Azure Bot Service must be able to reach `/api/messages`.
 
 ---
