@@ -77,7 +77,7 @@ See [Limitations](#limitations) for what isn't supported.
 ## Quickstart
 
 ### 1. Prerequisites
-- Node.js 22+, or Docker
+- Node.js 22.22.2+ (or 24.15+) with npm 12+, or Docker
 - A Slack workspace where you can create an app
 - A Microsoft Teams team where you are a **Team Owner**, in a tenant that allows custom app uploads
 - An Azure Bot registration (the free F0 tier is enough)
