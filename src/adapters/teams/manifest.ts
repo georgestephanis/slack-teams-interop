@@ -24,8 +24,6 @@ export function teamsAppIdFor(botAppId: string): string {
 export interface TeamsManifestOptions {
   /** Azure Bot Microsoft App ID; omitted for the placeholder template */
   botAppId?: string;
-  /** Connection display name, appended to the app's full name */
-  connectionName?: string;
 }
 
 export function buildTeamsManifest(options: TeamsManifestOptions = {}): Record<string, unknown> {
@@ -52,7 +50,7 @@ export function buildTeamsManifest(options: TeamsManifestOptions = {}): Record<s
     },
     description: {
       short: 'Two-way channel bridge connecting Microsoft Teams to Slack',
-      full: 'Bridges messages, threads, reactions, and files between Microsoft Teams and Slack channels using Resource-Specific Consent.',
+      full: 'Bridges messages, threaded replies, edits, reactions and images between a Microsoft Teams channel and a Slack channel, with links for other files. Reads only the team it is installed in, through Resource-Specific Consent.',
     },
     accentColor: '#4338CA',
     bots: [
@@ -63,6 +61,9 @@ export function buildTeamsManifest(options: TeamsManifestOptions = {}): Record<s
         isNotificationOnly: false,
       },
     ],
+    // Installs straight into a team, which is the only scope the bot supports
+    defaultInstallScope: 'team',
+    defaultGroupCapability: { team: 'bot' },
     // Resource-specific consent identifies the app by its Entra app id (the bot's App ID)
     webApplicationInfo: {
       id: botId,
@@ -78,7 +79,6 @@ export function buildTeamsManifest(options: TeamsManifestOptions = {}): Record<s
         ],
       },
     },
-    validDomains: ['*.trafficmanager.net', '*.botframework.com'],
   };
 }
 

@@ -407,6 +407,15 @@ describe('Teams manifest template', () => {
     const committed = JSON.parse(fs.readFileSync('./manifests/teams/manifest.json', 'utf8'));
     expect(committed).toEqual(buildTeamsManifest());
   });
+
+  it('asks for no more than the bot uses', () => {
+    const m = buildTeamsManifest({ botAppId: '00000000-0000-4000-8000-000000000001' }) as any;
+    // No tabs or web content, so Teams needn't trust any domains
+    expect(m.validDomains).toBeUndefined();
+    expect(m.bots).toEqual([expect.objectContaining({ scopes: ['team'] })]);
+    expect(m.authorization.permissions.resourceSpecific).toEqual([{ name: 'ChannelMessage.Read.Group', type: 'Application' }]);
+    expect(m.defaultInstallScope).toBe('team');
+  });
 });
 
 describe('createZip', () => {
