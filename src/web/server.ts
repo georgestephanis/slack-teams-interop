@@ -370,7 +370,7 @@ export function createWebServer(options: ServerOptions) {
       res.status(404).json({ error: 'Unknown Teams connection' });
       return;
     }
-    const manifestOptions = connection ? { botAppId: connection.appId, connectionName: connection.name } : {};
+    const manifestOptions = connection ? { botAppId: connection.appId } : {};
 
     if (req.query.json) {
       res.setHeader('Content-Disposition', 'attachment; filename="teams-manifest.json"');
