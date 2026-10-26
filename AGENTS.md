@@ -52,7 +52,7 @@ With no `SLACK_BOT_TOKEN` or `TEAMS_APP_ID` set, the service boots in API-only m
 | `src/core/credentials.ts` | `CredentialCipher` (AES-256-GCM, key from `CREDENTIALS_KEY`) for secrets stored in the DB. |
 | `src/adapters/matrix/types.ts` | Matrix event converters only. **Not wired into the running service.** |
 | `src/web/server.ts` | Express app. Public: `/api/messages` and `/api/messages/:connectionId` (Teams webhooks), `/slack/events` (HTTP mode), `/media/slack/:token`, `/api/health/live`. Behind admin auth: the `/api/*` routes, manifest generators, and the static `public/` dashboard. |
-| `public/` | Vanilla JS/CSS dashboard (no build step) plus the prebuilt `teams-app.zip`. |
+| `public/` | Vanilla JS/CSS dashboard (no build step) plus the prebuilt `teams-app.zip`. `teams-link.js` parses pasted Teams links; it sets a global so `app.js` and the tests can both use it. |
 | `manifests/` | Source Slack and Teams app manifests. |
 | `tests/` | Vitest specs. `bridge.test.ts` is an end-to-end routing test with mock adapters. |
 

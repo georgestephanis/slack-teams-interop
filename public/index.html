@@ -231,6 +231,12 @@
           <small>The Azure Bot (and Microsoft 365 tenant) the Teams channel belongs to</small>
         </div>
 
+        <div class="form-group">
+          <label for="teams-link">Teams Link (optional)</label>
+          <input type="url" id="teams-link" class="form-control" placeholder="Paste a link from Teams: Get link to team, or Get link to channel">
+          <small id="teams-link-note">Fills in the IDs below. A team link's ID is also its General channel's ID.</small>
+        </div>
+
         <div class="form-row">
           <div class="form-group col">
             <label for="teams-team-id">Teams Team ID</label>
@@ -340,6 +346,7 @@
     </div>
   </div>
 
+  <script src="/teams-link.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
