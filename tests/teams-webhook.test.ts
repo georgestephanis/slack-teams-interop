@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import http from 'node:http';
 import { BridgeCore } from '../src/core/bridge.js';
@@ -34,6 +34,7 @@ describe('Teams webhook', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     bridge.db.close();
     removeDb();
@@ -49,5 +50,20 @@ describe('Teams webhook', () => {
     // "`req.body` not an object", so no Teams activity was ever processed.
     expect(res.status).toBe(401);
     expect(res.headers.get('www-authenticate') ?? '').not.toContain('Basic');
+  });
+
+  it('logs a rejected request as one line, not a stack trace', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'message', channelId: 'msteams', serviceUrl: 'https://smba.trafficmanager.net/amer/' }),
+    });
+
+    expect(res.status).toBe(401);
+    expect(error).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toMatch(/^⚠️ Rejected a Teams webhook request on connection "default" \(message activity/);
   });
 });
