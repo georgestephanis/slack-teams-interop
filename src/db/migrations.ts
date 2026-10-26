@@ -138,17 +138,18 @@ export const migrations: Migration[] = [
     `);
   },
 
-  // 7: Whether the bot is installed in each Teams team, from Teams' install and uninstall events,
+  // 7: Whether each connection's bot is installed in each Teams team, from Teams' install and uninstall events,
   // so the dashboard can tell "waiting for install" and "removed from the team" apart from working.
   (db) => {
     db.exec(`
       CREATE TABLE teams_installations (
-        team_id TEXT PRIMARY KEY,
         connection_id TEXT NOT NULL,
+        team_id TEXT NOT NULL,
         tenant_id TEXT,
         team_name TEXT,
         installed INTEGER NOT NULL,
-        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (connection_id, team_id)
       );
     `);
   },

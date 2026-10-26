@@ -18,6 +18,7 @@ import { MicrosoftAppCredentials } from 'botframework-connector';
 import { BridgeAdapter, BridgeCore } from '../../core/bridge.js';
 import { MessageTranslator } from '../../core/translator.js';
 import { MAX_TRANSFER_BYTES } from '../../core/media.js';
+import { teamsInstallationKey } from '../../db/index.js';
 import {
   Attachment,
   ChannelMapping,
@@ -439,7 +440,7 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
     if (installed === undefined) return;
 
     try {
-      const previous = this.bridge.db.getTeamsInstallations().get(team.id);
+      const previous = this.bridge.db.getTeamsInstallations().get(teamsInstallationKey(connection.id, team.id));
       this.bridge.db.saveTeamsInstallation({
         teamId: team.id,
         connectionId: connection.id,

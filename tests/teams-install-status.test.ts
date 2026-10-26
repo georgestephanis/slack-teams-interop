@@ -4,6 +4,9 @@ import { TurnContext } from 'botbuilder';
 import { BridgeCore } from '../src/core/bridge.js';
 import { TeamsAdapter, TeamsNotInstalledError, isNotInConversationRoster } from '../src/adapters/teams/client.js';
 import { ChannelMapping, DEFAULT_MAPPING_OPTIONS, NormalizedMessage } from '../src/core/types.js';
+import { teamsInstallationKey } from '../src/db/index.js';
+
+const KEY = teamsInstallationKey('default', '19:team@thread.tacv2');
 
 const testDbPath = './data/test-teams-install-status.sqlite';
 const TEAM = '19:team@thread.tacv2';
@@ -86,7 +89,7 @@ describe('Teams install status', () => {
     await receive(adapter, added);
     await receive(adapter, { type: 'installationUpdate', action: 'add' });
 
-    const install = bridge.db.getTeamsInstallations().get(TEAM);
+    const install = bridge.db.getTeamsInstallations().get(KEY);
     expect(install).toMatchObject({ installed: true, connectionId: 'default', teamName: 'Example Team', tenantId: 'tenant-1' });
     const logs = vi.mocked(console.log).mock.calls.map((c) => String(c[0]));
     expect(logs.filter((l) => l.includes('was added to the Teams team "Example Team"'))).toHaveLength(1);
@@ -97,8 +100,17 @@ describe('Teams install status', () => {
     await receive(adapter, { type: 'installationUpdate', action: 'add' });
     await receive(adapter, { type: 'installationUpdate', action: 'remove' });
 
-    expect(bridge.db.getTeamsInstallations().get(TEAM)?.installed).toBe(false);
+    expect(bridge.db.getTeamsInstallations().get(KEY)?.installed).toBe(false);
     expect(String(vi.mocked(console.warn).mock.calls.at(-1)?.[0])).toContain('was removed from the Teams team "Example Team"');
+  });
+
+  it('keeps install state separately for each connection', () => {
+    bridge.db.saveTeamsInstallation({ teamId: TEAM, connectionId: 'default', installed: true });
+    bridge.db.saveTeamsInstallation({ teamId: TEAM, connectionId: 'other', installed: false });
+
+    const installs = bridge.db.getTeamsInstallations();
+    expect(installs.get(KEY)?.installed).toBe(true);
+    expect(installs.get(teamsInstallationKey('other', TEAM))?.installed).toBe(false);
   });
 
   it('ignores other members joining the team', async () => {
