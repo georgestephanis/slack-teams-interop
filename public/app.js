@@ -193,6 +193,29 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  /**
+   * Note under a bridge's Teams channel: whether the app is installed in the team, and the
+   * last failed post (cleared by the next successful one).
+   */
+  function teamsStatusNote(status) {
+    if (!status) return '';
+    const notes = {
+      waiting: ['warn-note', 'Waiting for the app to be installed in this team', 'Nothing has arrived from this Teams team yet. Add InterBridge to the team in Teams; until then, posts to it fail.'],
+      not_installed: ['error-note', 'App not installed in this team', 'Teams refused the last post because InterBridge isn\'t in this team. Add the app to the team in Teams.'],
+      removed: ['error-note', 'App was removed from this team', 'InterBridge was removed from this Teams team. Add it back to resume posting.'],
+    };
+    let html = '';
+    const note = notes[status.teamsInstall];
+    if (note) {
+      html += `<small class="${note[0]}" title="${escapeHtml(note[2])}">⚠ ${escapeHtml(note[1])}</small>`;
+    }
+    if (status.lastTeamsError && status.teamsInstall !== 'not_installed') {
+      const when = new Date(status.lastTeamsError.at).toLocaleString();
+      html += `<small class="error-note" title="${escapeHtml(status.lastTeamsError.message)}">⚠ Last post to Teams failed (${escapeHtml(when)})</small>`;
+    }
+    return html;
+  }
+
   function renderMappings(mappings) {
     mappingCount.textContent = `${mappings.length} ${mappings.length === 1 ? 'channel' : 'channels'}`;
 
@@ -224,7 +247,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <td>
               <span class="channel-tag teams">T ${escapeHtml(teamsDisplay)}</span>
               ${teamsConnections.length > 1 ? `<small class="connection-note">via ${escapeHtml(connectionName(m.teams.connectionId))}</small>` : ''}
-              ${m.status && !m.status.teamsServiceUrlKnown ? '<small class="warn-note" title="No activity seen from this Teams channel yet. Posts use a service URL learned from the same team or tenant if one is known, otherwise TEAMS_SERVICE_URL.">⚠ region not yet detected</small>' : ''}
+              ${teamsStatusNote(m.status)}
             </td>
             <td><span class="badge">${formatBadge}</span></td>
             <td><small>${features.join(' • ')}</small></td>

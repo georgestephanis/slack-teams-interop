@@ -604,6 +604,13 @@ code {
   color: var(--accent-amber);
 }
 
+.error-note {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.7rem;
+  color: var(--accent-rose);
+}
+
 .app-footer {
   padding: 24px 16px 32px;
   text-align: center;

@@ -137,6 +137,21 @@ export const migrations: Migration[] = [
       CREATE INDEX idx_tc_tenant ON teams_conversations (tenant_id, updated_at);
     `);
   },
+
+  // 7: Whether the bot is installed in each Teams team, from Teams' install and uninstall events,
+  // so the dashboard can tell "waiting for install" and "removed from the team" apart from working.
+  (db) => {
+    db.exec(`
+      CREATE TABLE teams_installations (
+        team_id TEXT PRIMARY KEY,
+        connection_id TEXT NOT NULL,
+        tenant_id TEXT,
+        team_name TEXT,
+        installed INTEGER NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = migrations.length;
