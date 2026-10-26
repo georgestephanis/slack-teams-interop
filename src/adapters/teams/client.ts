@@ -768,7 +768,10 @@ export class QuietAuthCloudAdapter extends CloudAdapter {
     logic: (context: TurnContext) => Promise<void>
   ): Promise<InvokeResponse | undefined> {
     try {
-      return await super.processActivity(authOrResult as any, activity, logic);
+      // Call the overload that matches, so both stay type-checked
+      return typeof authOrResult === 'string'
+        ? await super.processActivity(authOrResult, activity, logic)
+        : await super.processActivity(authOrResult, activity, logic);
     } catch (err) {
       if (!(err instanceof AuthenticationError)) throw err;
       console.warn(

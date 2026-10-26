@@ -124,7 +124,8 @@ async function bootstrap() {
 
   // One line per bridge, so the log shows what this instance is meant to be doing
   const mappings = bridge.db.getAllChannelMappings();
-  const heardFrom = bridge.db.getKnownTeamsConversationIds();
+  const heardFromChannels = bridge.db.getKnownTeamsConversationIds();
+  const heardFromTeams = bridge.db.getKnownTeamsTeamIds();
   console.log(`🔗 ${mappings.length} channel bridge(s) configured${mappings.length ? ':' : '.'}`);
   for (const m of mappings) {
     const connectionId = m.teams.connectionId || teamsAdapter.defaultConnectionId;
@@ -133,7 +134,7 @@ async function bootstrap() {
     const notes = [
       m.enabled ? undefined : 'paused',
       teamsAdapter.hasConnection(connectionId) ? undefined : `Teams connection "${connectionId}" isn't loaded`,
-      heardFrom.has(m.teams.channelId) || heardFrom.has(m.teams.teamId) ? undefined : 'nothing received from this Teams team yet',
+      heardFromChannels.has(m.teams.channelId) || heardFromTeams.has(m.teams.teamId) ? undefined : 'nothing received from this Teams team yet',
     ].filter(Boolean);
     console.log(`   - "${m.name}": Slack ${slack} ⇄ Teams ${teams} via "${connectionId}"${notes.length ? ` [${notes.join('; ')}]` : ''}`);
   }
