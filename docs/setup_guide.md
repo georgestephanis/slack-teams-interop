@@ -84,7 +84,7 @@ One InterBridge instance, and one Slack app, can bridge channels in several orga
 1. Set `CREDENTIALS_KEY` (see below). Connection secrets are stored in the database, encrypted with it.
 2. In the dashboard, open **Teams Connections** -> **Add Connection**. Choose an **ID**, a short slug such as `acme`. It names the connection's messaging endpoint, `https://<PUBLIC_URL>/api/messages/<id>`, and can't be changed later.
 3. Someone in the other organization creates the Azure Bot as in Step 3.1, in their own tenant, with **Messaging endpoint** set to that URL. They send you the App ID, App Tenant ID, and client secret, ideally the secret through a password manager. Enter them on the connection, along with the secret's expiry date so the dashboard can warn you before it lapses.
-4. Download that connection's **Teams App Package** and send it to their Teams admin, with the steps in [Onboarding a new Teams organisation](#onboarding-a-new-teams-organisation).
+4. Download that connection's **Teams App Package** and send it to their Teams admin, with the steps in [Onboarding a new Teams organization](#onboarding-a-new-teams-organization).
 5. Add channel bridges with that connection selected (Section 7). To find the IDs, ask them for the link to the team (and to the channel, if it isn't General).
 
 Changes to connections take effect immediately, without a restart. The bot configured through `TEAMS_APP_ID`, if any, appears as a read-only connection named by `TEAMS_CONNECTION_ID`. It answers at both `/api/messages` and `/api/messages/<TEAMS_CONNECTION_ID>`, and bridges created before connections existed use it.
@@ -95,15 +95,15 @@ The bridge only accepts an activity if:
 
 A Teams channel can be bridged through only one connection.
 
-### Onboarding a new Teams organisation
+### Onboarding a new Teams organization
 
-When the Teams side belongs to another organisation, its admin does three things. Uploading the app makes it **available**; it does nothing until it's **added to the team**, which is the step most often missed. You can send them this list.
+When the Teams side belongs to another organization, its admin does the steps below. Uploading the app makes it **available**; it does nothing until it's **added to the team**, which is the step most often missed. You can send them this list.
 
 1. **Create the Azure Bot** (Step 3.1) in their own tenant, with the messaging endpoint you give them, and send you the App ID, App Tenant ID and client secret.
 2. **Upload the app package** you send them. In the [Teams admin center](https://admin.teams.microsoft.com): **Teams apps** -> **Manage apps** -> **Actions** -> **Upload new app**. Check that it's **Unblocked** and available to the people who need it. Their tenant's policy may require approving a custom app first.
 3. **Add it to the team.** Either:
    - **Teams admin center:** on **Manage apps**, search for InterBridge, **tick the checkbox at the left of its row** (the toolbar buttons stay greyed out until a row is selected), click **Add to team**, choose the team, and click **Apply**. Or:
-   - **Teams client** (as a team owner): hover over the team name, click **⋯** -> **Manage team** -> **Apps** -> **Get more apps**, find InterBridge under the apps built for their organisation, and add it to the team.
+   - **Teams client** (as a team owner): hover over the team name, click **⋯** -> **Manage team** -> **Apps** -> **Get more apps**, find InterBridge under the apps built for their organization, and add it to the team.
 4. **Send you the link to the team** (**⋯** next to the team -> **Get link to team**), and to the channel if it isn't General. Paste it into the bridge form's **Teams Link** field.
 
 **How to tell it worked.** The bridge logs `InterBridge was added to the Teams team "<name>"` as soon as Teams reports the install, and the dashboard drops the "Waiting for the app to be installed" warning. Then post one message in each direction.
