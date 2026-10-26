@@ -111,6 +111,14 @@ document.addEventListener('DOMContentLoaded', () => {
     teamsLinkNote.textContent = notes.join(' ');
   });
 
+  // Names came from the pasted link, so drop them once the IDs are edited by hand
+  teamIdInput.addEventListener('input', () => {
+    parsedTeamsNames = { ...parsedTeamsNames, teamName: undefined };
+  });
+  channelIdInput.addEventListener('input', () => {
+    parsedTeamsNames = { ...parsedTeamsNames, channelName: undefined };
+  });
+
   for (const input of [teamIdInput, channelIdInput]) {
     input.addEventListener('blur', () => {
       const id = window.InterBridgeTeamsLink.normalizeTeamsId(input.value);
