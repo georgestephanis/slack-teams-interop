@@ -187,7 +187,9 @@ Running an older version against a database that a newer version has upgraded is
    - **Bridge Name**: e.g. `Client Alpha Sync`.
    - **Slack Channel ID**: right-click the channel -> **Copy link**. The ID is the last part, e.g. `C0123456789`.
    - **Teams Connection**: the Azure Bot of the tenant the Teams channel belongs to. With a single tenant there's only one choice.
-   - **Teams Team ID** and **Teams Channel ID**: in Teams, click **⋯** next to the channel -> **Get link to channel**. The link contains the channel ID in URL-encoded form, e.g. `19%3a1a2b3c...%40thread.tacv2`. **Decode it** before pasting (`%3a` → `:`, `%40` → `@`), giving `19:1a2b3c...@thread.tacv2`. For the Team ID, use **Get link to team** and decode the same `19:...@thread.tacv2` part of that link.
+   - **Teams Link**, **Teams Team ID** and **Teams Channel ID**: in Teams, click **⋯** next to the team -> **Get link to team**, and paste the link into **Teams Link**. That fills in both IDs: a team's ID is also the ID of its **General** channel. To bridge a different channel, also paste that channel's link (**⋯** next to the channel -> **Get link to channel**); channel links don't contain the team ID. If someone in another organisation sends you the links, either kind works. The form warns if the link's tenant doesn't match the selected Teams connection.
+
+     To enter the IDs by hand instead, take the `19%3a...%40thread.tacv2` part of the link. Pasted into an ID field, it's decoded for you, giving `19:...@thread.tacv2`.
    - **Teams Display Style**: **Adaptive Card** (sender avatar and name) or **Clean Markdown** (`**[Slack] Jane Doe**` header).
    - **Options**:
 

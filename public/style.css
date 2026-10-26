@@ -545,6 +545,21 @@ code {
   margin-top: 4px;
 }
 
+.ok-note {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.7rem;
+  color: var(--accent-emerald);
+}
+
+.form-group small.ok-note {
+  color: var(--accent-emerald);
+}
+
+.form-group small.warn-note {
+  color: var(--accent-amber);
+}
+
 .form-row {
   display: flex;
   gap: 16px;

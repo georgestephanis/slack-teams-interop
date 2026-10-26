@@ -43,6 +43,9 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('modal-title').textContent = 'New Channel Bridge';
     document.getElementById('mapping-id').value = '';
     formMapping.reset();
+    parsedTeamsNames = {};
+    teamsLinkNote.className = '';
+    teamsLinkNote.textContent = teamsLinkHelp;
     renderConnectionOptions();
     document.getElementById('sync-threads').checked = true;
     document.getElementById('sync-reactions').checked = true;
@@ -52,6 +55,68 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('sync-deletes').checked = true;
     modalMapping.classList.remove('hidden');
   });
+
+  // Fill the Teams IDs from a pasted Teams link, and decode IDs pasted in URL-encoded form
+  const teamsLinkInput = document.getElementById('teams-link');
+  const teamsLinkNote = document.getElementById('teams-link-note');
+  const teamsLinkHelp = teamsLinkNote.textContent;
+  const teamIdInput = document.getElementById('teams-team-id');
+  const channelIdInput = document.getElementById('teams-channel-id');
+  let parsedTeamsNames = {};
+
+  teamsLinkInput.addEventListener('input', () => {
+    const value = teamsLinkInput.value.trim();
+    teamsLinkNote.className = '';
+    if (!value) {
+      teamsLinkNote.textContent = teamsLinkHelp;
+      return;
+    }
+    const link = window.InterBridgeTeamsLink.parseTeamsLink(value);
+    if (!link) {
+      teamsLinkNote.className = 'warn-note';
+      teamsLinkNote.textContent = "That isn't a Teams team or channel link.";
+      return;
+    }
+
+    const notes = [];
+    if (link.kind === 'team') {
+      teamIdInput.value = link.teamId;
+      channelIdInput.value = link.channelId;
+      parsedTeamsNames = { teamName: link.teamName, channelName: 'General' };
+      notes.push("Filled the team ID and its General channel's ID (they're the same). To bridge another channel, paste that channel's link too.");
+    } else {
+      channelIdInput.value = link.channelId;
+      parsedTeamsNames = { ...parsedTeamsNames, channelName: link.channelName, teamName: link.teamName || parsedTeamsNames.teamName };
+      if (link.channelName && link.channelName.toLowerCase() === 'general') {
+        teamIdInput.value = link.channelId;
+        notes.push('Filled both IDs: a General channel has the same ID as its team.');
+      } else {
+        notes.push(`Filled the channel ID${link.channelName ? ` for "${link.channelName}"` : ''}. Channel links don't include the team ID: paste the team's link too, or enter it below.`);
+      }
+    }
+
+    // A link from another tenant can't work through the selected connection
+    const connection = teamsConnections.find((c) => c.id === (selectMappingConnection.value || defaultConnectionId()));
+    let warn = false;
+    if (link.tenantId && connection?.tenantId && link.tenantId.toLowerCase() !== connection.tenantId.toLowerCase()) {
+      const match = teamsConnections.find((c) => c.tenantId && c.tenantId.toLowerCase() === link.tenantId.toLowerCase());
+      notes.push(
+        match
+          ? `This team is in the tenant of the "${match.name}" connection, not "${connection.name}".`
+          : `This team's tenant doesn't match the "${connection.name}" connection's tenant.`
+      );
+      warn = true;
+    }
+    teamsLinkNote.className = warn ? 'warn-note' : 'ok-note';
+    teamsLinkNote.textContent = notes.join(' ');
+  });
+
+  for (const input of [teamIdInput, channelIdInput]) {
+    input.addEventListener('blur', () => {
+      const id = window.InterBridgeTeamsLink.normalizeTeamsId(input.value);
+      if (id) input.value = id;
+    });
+  }
 
   btnModalClose.addEventListener('click', () => modalMapping.classList.add('hidden'));
   btnModalCancel.addEventListener('click', () => modalMapping.classList.add('hidden'));
@@ -108,6 +173,8 @@ document.addEventListener('DOMContentLoaded', () => {
       teams: {
         teamId: document.getElementById('teams-team-id').value.trim(),
         channelId: document.getElementById('teams-channel-id').value.trim(),
+        teamName: parsedTeamsNames.teamName || undefined,
+        channelName: parsedTeamsNames.channelName || undefined,
         connectionId: selectMappingConnection.value || undefined,
       },
       options: {
