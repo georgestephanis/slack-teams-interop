@@ -122,6 +122,23 @@ async function bootstrap() {
     console.log('ℹ️ No Teams connections configured. Running in configuration/API mode.');
   }
 
+  // One line per bridge, so the log shows what this instance is meant to be doing
+  const mappings = bridge.db.getAllChannelMappings();
+  const heardFromChannels = bridge.db.getKnownTeamsConversationIds();
+  const heardFromTeams = bridge.db.getKnownTeamsTeamIds();
+  console.log(`🔗 ${mappings.length} channel bridge(s) configured${mappings.length ? ':' : '.'}`);
+  for (const m of mappings) {
+    const connectionId = m.teams.connectionId || teamsAdapter.defaultConnectionId;
+    const slack = m.slack.channelName ? `#${m.slack.channelName.replace(/^#/, '')} (${m.slack.channelId})` : m.slack.channelId;
+    const teams = [m.teams.teamName, m.teams.channelName].filter(Boolean).join(' / ') || m.teams.channelId;
+    const notes = [
+      m.enabled ? undefined : 'paused',
+      teamsAdapter.hasConnection(connectionId) ? undefined : `Teams connection "${connectionId}" isn't loaded`,
+      heardFromChannels.has(m.teams.channelId) || heardFromTeams.has(m.teams.teamId) ? undefined : 'nothing received from this Teams team yet',
+    ].filter(Boolean);
+    console.log(`   - "${m.name}": Slack ${slack} ⇄ Teams ${teams} via "${connectionId}"${notes.length ? ` [${notes.join('; ')}]` : ''}`);
+  }
+
   if (config.ADMIN_PASSWORD === 'admin') {
     console.warn('⚠️ ADMIN_PASSWORD is set to the default "admin". Change it before exposing this service.');
   }

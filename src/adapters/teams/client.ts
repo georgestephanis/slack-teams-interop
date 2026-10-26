@@ -10,11 +10,13 @@ import {
   CloudAdapter,
   ConfigurationBotFrameworkAuthentication,
   ConversationReference,
+  InvokeResponse,
   MessageFactory,
+  StatusCodes,
   TeamsActivityHandler,
   TurnContext,
 } from 'botbuilder';
-import { MicrosoftAppCredentials } from 'botframework-connector';
+import { AuthenticateRequestResult, AuthenticationError, MicrosoftAppCredentials } from 'botframework-connector';
 import { BridgeAdapter, BridgeCore } from '../../core/bridge.js';
 import { MessageTranslator } from '../../core/translator.js';
 import { MAX_TRANSFER_BYTES } from '../../core/media.js';
@@ -152,7 +154,7 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
       MicrosoftAppTenantId: config.appTenantId,
       MicrosoftAppType: config.appType ?? 'MultiTenant',
     });
-    const cloudAdapter = new CloudAdapter(botAuth);
+    const cloudAdapter = new QuietAuthCloudAdapter(botAuth, id);
 
     // Report and swallow: rethrowing here returns a 500 to Bot Framework, which redelivers the activity.
     cloudAdapter.onTurnError = async (_context, error) => {
@@ -744,6 +746,40 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
   async runForConnection(context: TurnContext, connectionId: string): Promise<void> {
     context.turnState.set(CONNECTION_KEY, this.requireConnection(connectionId));
     await this.run(context);
+  }
+}
+
+/**
+ * CloudAdapter that answers webhook requests with a bad or missing token with a one-line warning
+ * and a 401, instead of letting CloudAdapter.process log a full stack trace. The webhook is public,
+ * so scanners and misconfigured bots hit it, and each one used to log ~10 lines.
+ */
+export class QuietAuthCloudAdapter extends CloudAdapter {
+  constructor(
+    auth: ConfigurationBotFrameworkAuthentication,
+    private readonly connectionId: string
+  ) {
+    super(auth);
+  }
+
+  protected override async processActivity(
+    authOrResult: string | AuthenticateRequestResult,
+    activity: Activity,
+    logic: (context: TurnContext) => Promise<void>
+  ): Promise<InvokeResponse | undefined> {
+    try {
+      // Call the overload that matches, so both stay type-checked
+      return typeof authOrResult === 'string'
+        ? await super.processActivity(authOrResult, activity, logic)
+        : await super.processActivity(authOrResult, activity, logic);
+    } catch (err) {
+      if (!(err instanceof AuthenticationError)) throw err;
+      console.warn(
+        `⚠️ Rejected a Teams webhook request on connection "${this.connectionId}" (${activity.type || 'no type'} ` +
+          `activity, ${activity.serviceUrl || 'no service URL'}): ${err.message}`
+      );
+      return { status: StatusCodes.UNAUTHORIZED, body: err.message };
+    }
   }
 }
 
