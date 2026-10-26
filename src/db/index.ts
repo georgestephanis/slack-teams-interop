@@ -48,6 +48,21 @@ export interface TeamsConnectionRecord {
   updatedAt?: string;
 }
 
+/** Map key for getTeamsInstallations(). */
+export function teamsInstallationKey(connectionId: string, teamId: string): string {
+  return `${connectionId}\n${teamId}`;
+}
+
+/** Whether a connection's bot is currently installed in a Teams team. */
+export interface TeamsInstallationRecord {
+  teamId: string;
+  connectionId: string;
+  tenantId?: string;
+  teamName?: string;
+  installed: boolean;
+  updatedAt: string;
+}
+
 export interface ReactionRecord {
   emoji: string;
   userId: string;
@@ -426,6 +441,52 @@ export class BridgeDatabase {
       conversation_id: string;
     }[];
     return new Set(rows.map((r) => r.conversation_id));
+  }
+
+  /** Teams team ids the bridge has received any activity from, in any of their channels. */
+  getKnownTeamsTeamIds(): Set<string> {
+    const rows = this.db.prepare('SELECT DISTINCT team_id FROM teams_conversations WHERE team_id IS NOT NULL').all() as {
+      team_id: string;
+    }[];
+    return new Set(rows.map((r) => r.team_id));
+  }
+
+  // --- Teams Installation Methods ---
+
+  /** Record that the bot was added to (installed) or removed from a Teams team. */
+  saveTeamsInstallation(record: Omit<TeamsInstallationRecord, 'updatedAt'>): void {
+    this.db
+      .prepare(
+        `INSERT INTO teams_installations (team_id, connection_id, tenant_id, team_name, installed, updated_at)
+         VALUES (?, ?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(connection_id, team_id) DO UPDATE SET
+           tenant_id = COALESCE(excluded.tenant_id, teams_installations.tenant_id),
+           team_name = COALESCE(excluded.team_name, teams_installations.team_name),
+           installed = excluded.installed,
+           updated_at = datetime('now')`
+      )
+      .run(record.teamId, record.connectionId, record.tenantId || null, record.teamName || null, record.installed ? 1 : 0);
+  }
+
+  /**
+   * Install state of every team a connection's bot has been added to or removed from, keyed by
+   * teamsInstallationKey(connectionId, teamId).
+   */
+  getTeamsInstallations(): Map<string, TeamsInstallationRecord> {
+    const rows = this.db.prepare('SELECT * FROM teams_installations').all() as Record<string, unknown>[];
+    return new Map(
+      rows.map((r) => [
+        teamsInstallationKey(r.connection_id as string, r.team_id as string),
+        {
+          teamId: r.team_id as string,
+          connectionId: r.connection_id as string,
+          tenantId: (r.tenant_id as string) || undefined,
+          teamName: (r.team_name as string) || undefined,
+          installed: Boolean(r.installed),
+          updatedAt: r.updated_at as string,
+        },
+      ])
+    );
   }
 
   // --- User Cache Methods ---

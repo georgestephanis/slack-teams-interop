@@ -18,6 +18,7 @@ import { MicrosoftAppCredentials } from 'botframework-connector';
 import { BridgeAdapter, BridgeCore } from '../../core/bridge.js';
 import { MessageTranslator } from '../../core/translator.js';
 import { MAX_TRANSFER_BYTES } from '../../core/media.js';
+import { teamsInstallationKey } from '../../db/index.js';
 import {
   Attachment,
   ChannelMapping,
@@ -67,6 +68,38 @@ const DEFAULT_SERVICE_URL = 'https://smba.trafficmanager.net/amer/';
 const CONNECTION_KEY = Symbol('interbridge.teamsConnection');
 
 /**
+ * A post failed because the connection's bot isn't installed in the target team (Teams answers
+ * 403 BotNotInConversationRoster). Logged as one line: the fix is in Teams, not in the bridge.
+ */
+export class TeamsNotInstalledError extends Error {
+  constructor(
+    public readonly team: string,
+    public readonly connectionId: string,
+    options?: { cause?: unknown }
+  ) {
+    super(
+      `InterBridge isn't installed in the Teams team ${team} (connection "${connectionId}"), so Teams refused the post. ` +
+        'Add the app to that team (in Teams: Apps > Manage your apps > Add to a team), then post again.',
+      options
+    );
+    this.name = 'TeamsNotInstalledError';
+  }
+}
+
+/** True for Teams' "the bot is not part of the conversation roster" rejection. */
+export function isNotInConversationRoster(err: unknown): boolean {
+  const e = err as { code?: string; statusCode?: number; message?: string } | undefined;
+  return e?.code === 'BotNotInConversationRoster' || (e?.statusCode === 403 && /conversation roster/i.test(e.message || ''));
+}
+
+/** Most recent failed post into a Teams channel, cleared by the next successful one. */
+export interface TeamsDeliveryFailure {
+  at: string;
+  error: string;
+  notInstalled: boolean;
+}
+
+/**
  * Teams side of the bridge. Holds one Bot Framework adapter per connection (Azure Bot), so a
  * single instance can bridge channels in several Microsoft 365 tenants. Inbound activities are
  * authenticated by the connection whose webhook they arrived on; outbound calls use the
@@ -80,6 +113,8 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
   /** In-memory cache in front of the persisted teams_conversations table */
   private serviceUrlMap = new Map<string, string>();
   private warnedFallbackChannels = new Set<string>();
+  /** Last failed post per Teams channel (in memory), for the dashboard */
+  private deliveryFailures = new Map<string, TeamsDeliveryFailure>();
 
   /**
    * @param config The TEAMS_APP_ID bot, registered as the default connection. Optional: more
@@ -203,6 +238,12 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
     return false;
   }
 
+  /** True if an id is the connection's bot (Teams may send it with or without the '28:' prefix). */
+  private isOwnBot(connection: TeamsConnection, id: string | undefined): boolean {
+    const bareAppId = connection.config.appId.replace(/^28:/, '');
+    return id === bareAppId || id === `28:${bareAppId}`;
+  }
+
   private setupHandlers(): void {
     // 0. Reject activities from a tenant other than the connection's. Then remember the service
     // URL from every inbound activity (messages, installs, channel updates, reactions), so
@@ -217,6 +258,7 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
         return;
       }
       this.rememberServiceUrl(context.activity);
+      this.trackInstallation(context.activity, connection);
       await next();
     });
 
@@ -225,10 +267,8 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
       const activity = context.activity;
       const connection = this.connectionOf(context);
 
-      // Check if message is from the bot itself (Teams may send with or without '28:' prefix)
-      const bareAppId = connection.config.appId.replace(/^28:/, '');
-      const senderId = activity.from?.id;
-      if (senderId === bareAppId || senderId === `28:${bareAppId}`) {
+      // Check if message is from the bot itself
+      if (this.isOwnBot(connection, activity.from?.id)) {
         await next();
         return;
       }
@@ -381,6 +421,62 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
   }
 
   /**
+   * Record and log the bot being added to or removed from a team. Teams reports this as an
+   * installationUpdate, a conversationUpdate whose membersAdded/membersRemoved includes the bot,
+   * or both; only a change of state is logged.
+   */
+  private trackInstallation(activity: Partial<Activity>, connection: TeamsConnection): void {
+    const team = activity.channelData?.team as { id?: string; name?: string } | undefined;
+    if (!team?.id) return;
+
+    let installed: boolean | undefined;
+    if (activity.type === ActivityTypes.InstallationUpdate) {
+      if (activity.action?.startsWith('add')) installed = true;
+      else if (activity.action?.startsWith('remove')) installed = false;
+    } else if (activity.type === ActivityTypes.ConversationUpdate) {
+      if (activity.membersAdded?.some((m) => this.isOwnBot(connection, m.id))) installed = true;
+      else if (activity.membersRemoved?.some((m) => this.isOwnBot(connection, m.id))) installed = false;
+    }
+    if (installed === undefined) return;
+
+    try {
+      const previous = this.bridge.db.getTeamsInstallations().get(teamsInstallationKey(connection.id, team.id));
+      this.bridge.db.saveTeamsInstallation({
+        teamId: team.id,
+        connectionId: connection.id,
+        tenantId: activity.channelData?.tenant?.id || activity.conversation?.tenantId,
+        teamName: team.name,
+        installed,
+      });
+      if (previous?.installed === installed) return;
+
+      const label = team.name ? `"${team.name}"` : team.id;
+      const bridges = this.bridge.db.getAllChannelMappings().filter((m) => m.teams.teamId === team.id).length;
+      if (installed) {
+        this.deliveryFailures.forEach((_f, channelId) => {
+          if (this.bridge.db.findMappingByTeamsChannel(channelId)?.teams.teamId === team.id) this.deliveryFailures.delete(channelId);
+        });
+        console.log(
+          `✅ InterBridge was added to the Teams team ${label} (connection "${connection.id}"). ` +
+            (bridges ? `${bridges} bridge(s) use this team.` : 'No bridge uses this team yet; add one in the dashboard.')
+        );
+      } else {
+        console.warn(
+          `⚠️ InterBridge was removed from the Teams team ${label} (connection "${connection.id}").` +
+            (bridges ? ` Its ${bridges} bridge(s) can't post there until the app is added back.` : '')
+        );
+      }
+    } catch (err) {
+      this.bridge.emit('error', err);
+    }
+  }
+
+  /** Most recent failed post into a Teams channel, if the last attempt failed. */
+  lastDeliveryFailure(channelId: string): TeamsDeliveryFailure | undefined {
+    return this.deliveryFailures.get(channelId);
+  }
+
+  /**
    * Resolve the service URL to use when posting proactively to a Teams channel.
    */
   resolveServiceUrl(channelId: string, teamId?: string, connectionId?: string): string {
@@ -421,21 +517,14 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
     }
 
     // Proactive posts ignore replyToId in channels; the thread is addressed via the conversation id
-    const connection = this.connectionFor(mapping);
-    const conversationReference = this.conversationReference(targetChannelId, mapping, parentMessageId);
-
     let sentMessageId = '';
 
-    await connection.cloudAdapter.continueConversationAsync(
-      connection.config.appId,
-      conversationReference,
-      async (turnContext) => {
-        const response = await turnContext.sendActivity(activity);
-        if (response?.id) {
-          sentMessageId = response.id;
-        }
+    await this.proactive(targetChannelId, mapping, parentMessageId, async (turnContext) => {
+      const response = await turnContext.sendActivity(activity);
+      if (response?.id) {
+        sentMessageId = response.id;
       }
-    );
+    });
 
     return { messageId: sentMessageId || `${Date.now()}` };
   }
@@ -454,14 +543,9 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
     const activity = this.buildActivity(message, mapping, options?.footer);
     activity.id = targetMessageId;
 
-    const connection = this.connectionFor(mapping);
-    await connection.cloudAdapter.continueConversationAsync(
-      connection.config.appId,
-      this.conversationReference(targetChannelId, mapping, threadRootId ?? targetMessageId),
-      async (turnContext) => {
-        await turnContext.updateActivity(activity);
-      }
-    );
+    await this.proactive(targetChannelId, mapping, threadRootId ?? targetMessageId, async (turnContext) => {
+      await turnContext.updateActivity(activity);
+    });
   }
 
   /**
@@ -473,14 +557,9 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
     mapping: ChannelMapping,
     threadRootId?: string
   ): Promise<void> {
-    const connection = this.connectionFor(mapping);
-    await connection.cloudAdapter.continueConversationAsync(
-      connection.config.appId,
-      this.conversationReference(targetChannelId, mapping, threadRootId ?? targetMessageId),
-      async (turnContext) => {
-        await turnContext.deleteActivity(targetMessageId);
-      }
-    );
+    await this.proactive(targetChannelId, mapping, threadRootId ?? targetMessageId, async (turnContext) => {
+      await turnContext.deleteActivity(targetMessageId);
+    });
   }
 
   /**
@@ -534,15 +613,10 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
     threadRootId: string
   ): Promise<{ messageId: string }> {
     let messageId = '';
-    const connection = this.connectionFor(mapping);
-    await connection.cloudAdapter.continueConversationAsync(
-      connection.config.appId,
-      this.conversationReference(targetChannelId, mapping, threadRootId),
-      async (turnContext) => {
-        const response = await turnContext.sendActivity(MessageFactory.text(text));
-        messageId = response?.id || '';
-      }
-    );
+    await this.proactive(targetChannelId, mapping, threadRootId, async (turnContext) => {
+      const response = await turnContext.sendActivity(MessageFactory.text(text));
+      messageId = response?.id || '';
+    });
     if (!messageId) throw new Error('Teams did not return an id for the posted notice');
     return { messageId };
   }
@@ -574,14 +648,61 @@ export class TeamsAdapter extends TeamsActivityHandler implements BridgeAdapter 
   ): Promise<void> {
     const activity = MessageFactory.text(text);
     activity.id = noticeId;
+    await this.proactive(targetChannelId, mapping, threadRootId, async (turnContext) => {
+      await turnContext.updateActivity(activity);
+    });
+  }
+
+  /**
+   * Run a proactive call into a channel through the mapping's connection. Bot Framework passes an
+   * error thrown inside the callback to onTurnError and then resolves normally, so it is captured
+   * here and rethrown: a failed post must fail, or BridgeCore would record it as relayed. Teams'
+   * "not installed" rejection becomes a TeamsNotInstalledError.
+   */
+  private async proactive(
+    channelId: string,
+    mapping: ChannelMapping,
+    threadRootId: string | undefined,
+    logic: (context: TurnContext) => Promise<void>
+  ): Promise<void> {
     const connection = this.connectionFor(mapping);
-    await connection.cloudAdapter.continueConversationAsync(
-      connection.config.appId,
-      this.conversationReference(targetChannelId, mapping, threadRootId),
-      async (turnContext) => {
-        await turnContext.updateActivity(activity);
-      }
-    );
+    let failed = false;
+    let failure: unknown;
+    try {
+      await connection.cloudAdapter.continueConversationAsync(
+        connection.config.appId,
+        this.conversationReference(channelId, mapping, threadRootId),
+        async (context) => {
+          try {
+            await logic(context);
+          } catch (err) {
+            failed = true;
+            failure = err;
+          }
+        }
+      );
+    } catch (err) {
+      failed = true;
+      failure = err;
+    }
+
+    if (!failed) {
+      this.deliveryFailures.delete(channelId);
+      return;
+    }
+
+    const notInstalled = isNotInConversationRoster(failure);
+    const error = notInstalled
+      ? new TeamsNotInstalledError(mapping.teams.teamName ? `"${mapping.teams.teamName}"` : mapping.teams.teamId, connection.id, {
+          cause: failure,
+        })
+      : failure;
+    this.deliveryFailures.set(channelId, {
+      at: new Date().toISOString(),
+      error: error instanceof Error ? error.message : String(error),
+      notInstalled,
+    });
+    throw error;
   }
 
   /**

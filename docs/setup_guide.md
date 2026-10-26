@@ -128,7 +128,7 @@ cp .env.example .env
 
 The bridge starts with whichever platforms are configured. Without Slack or Teams credentials, it runs in dashboard/API-only mode.
 
-> **About `TEAMS_SERVICE_URL`:** Bot Framework routes proactive posts through a region-specific service URL. The bridge learns the correct URL from the first activity it receives from a team (installing the app counts), and stores it in the database. `TEAMS_SERVICE_URL` is only a fallback for channels it hasn't heard from yet. If your tenant is outside the Americas, set it to your region's endpoint (for example `https://smba.trafficmanager.net/emea/` or `.../apac/`). The dashboard flags bridges whose Teams channel hasn't been seen yet.
+> **About `TEAMS_SERVICE_URL`:** Bot Framework routes proactive posts through a region-specific service URL. The bridge learns the correct URL from the first activity it receives from a team (installing the app counts), and stores it in the database. `TEAMS_SERVICE_URL` is only a fallback for channels it hasn't heard from yet. If your tenant is outside the Americas, set it to your region's endpoint (for example `https://smba.trafficmanager.net/emea/` or `.../apac/`). The dashboard flags bridges whose Teams team hasn't been heard from yet as "Waiting for the app to be installed in this team".
 
 ---
 
@@ -217,7 +217,8 @@ To change a bridge's options later, delete it and add it again with the same cha
 | Logs show "arrived on connection X, but its bridge uses Y", or "from another tenant" | The tenant's Azure Bot points at another connection's messaging endpoint, or the bridge was created with the wrong connection. |
 | A Teams connection shows **Inactive** | It's disabled, or its secret couldn't be decrypted: `CREDENTIALS_KEY` is missing or isn't the key it was saved with. Check the startup log. |
 | Teams returns 401/403, or the logs show "Teams Turn Error" auth failures | `TEAMS_APP_TYPE` doesn't match the Azure bot's **Type of App**, or `TEAMS_TENANT_ID`/`TEAMS_APP_PASSWORD` is wrong or expired. |
-| Slack → Teams fails for a non-US tenant | The bridge hasn't seen that team yet and is using the `TEAMS_SERVICE_URL` fallback. Send any message in the Teams channel, or set `TEAMS_SERVICE_URL` to your region. The dashboard shows "⚠ region not yet detected". |
+| Slack → Teams fails for a non-US tenant | The bridge hasn't seen that team yet and is using the `TEAMS_SERVICE_URL` fallback. Send any message in the Teams channel, or set `TEAMS_SERVICE_URL` to your region. The dashboard shows "⚠ Waiting for the app to be installed in this team". |
+| Slack → Teams fails and the log says "InterBridge isn't installed in the Teams team …" | Teams answered `403 BotNotInConversationRoster`: the app was uploaded but isn't in that team. Add it to the team (see [Step 3.2](#step-32-package-and-install-the-teams-app)). The log shows "InterBridge was added to the Teams team …" once it is, and the dashboard warning clears. |
 | Teams says the app package is invalid, or messages are ignored | The package still has the placeholder bot ID. Download the connection's package from the dashboard instead (Step 3.2). |
 | Slack images show as links in Teams | `MEDIA_PROXY_SECRET` or `PUBLIC_URL` isn't set, or `/media/slack/*` isn't forwarded by your proxy. |
 | The bridge refuses to start with "newer than this build supports" | You're running an older version against an upgraded database. Upgrade, or restore the matching `.bak-v<N>` backup. |

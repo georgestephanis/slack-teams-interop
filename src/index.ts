@@ -4,7 +4,7 @@
  */
 
 import { SLACK_EVENTS_PATH, SlackAdapter } from './adapters/slack/client.js';
-import { TeamsAdapter } from './adapters/teams/client.js';
+import { TeamsAdapter, TeamsNotInstalledError } from './adapters/teams/client.js';
 import { TeamsConnectionStore } from './adapters/teams/connections.js';
 import { config } from './config.js';
 import { BridgeCore } from './core/bridge.js';
@@ -22,6 +22,11 @@ async function bootstrap() {
   // EventEmitter rethrows them, so failures went unlogged and bubbled into the
   // platform SDKs (e.g. a 500 back to Bot Framework, prompting redelivery).
   bridge.on('error', (err: unknown) => {
+    // A failure the operator fixes in Teams gets one actionable line instead of a stack trace
+    if (err instanceof TeamsNotInstalledError) {
+      console.error(`❌ ${err.message}`);
+      return;
+    }
     console.error('❌ Bridge error:', err);
   });
 

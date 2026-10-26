@@ -67,7 +67,7 @@ See [Limitations](#limitations) for what isn't supported.
 |   |                     SQLite (WAL, versioned migrations)                |   |
 |   |  - Channel bridges and their options                                  |   |
 |   |  - Message pairs, incl. message text for re-rendering (pruned)        |   |
-|   |  - Reactions, Teams service URLs, user profile cache                  |   |
+|   |  - Reactions, Teams service URLs and installs, user profile cache    |   |
 |   +-----------------------------------------------------------------------+   |
 +-------------------------------------------------------------------------------+
 ```

@@ -13,6 +13,7 @@ import { TeamsAdapter } from '../adapters/teams/client.js';
 import { TeamsConnectionError, TeamsConnectionInput, TeamsConnectionStore } from '../adapters/teams/connections.js';
 import { buildTeamsAppPackage, buildTeamsManifest } from '../adapters/teams/manifest.js';
 import { ChannelMapping } from '../core/types.js';
+import { teamsInstallationKey } from '../db/index.js';
 
 export interface ServerOptions {
   port: number;
@@ -162,14 +163,31 @@ export function createWebServer(options: ServerOptions) {
   // Get all channel mappings
   app.get('/api/mappings', (_req: Request, res: Response) => {
     const knownTeamsChannels = bridge.db.getKnownTeamsConversationIds();
+    const knownTeams = bridge.db.getKnownTeamsTeamIds();
+    const installations = bridge.db.getTeamsInstallations();
     res.json(
-      bridge.db.getAllChannelMappings().map((m) => ({
-        ...m,
-        status: {
-          // False until the bridge has seen an activity from this Teams channel (see #10)
-          teamsServiceUrlKnown: knownTeamsChannels.has(m.teams.channelId),
-        },
-      }))
+      bridge.db.getAllChannelMappings().map((m) => {
+        // False until the bridge has seen an activity from this Teams channel (see #10)
+        const teamsServiceUrlKnown = knownTeamsChannels.has(m.teams.channelId);
+        const connectionId = m.teams.connectionId || teamsAdapter?.defaultConnectionId || '';
+        const installation = installations.get(teamsInstallationKey(connectionId, m.teams.teamId));
+        const lastFailure = teamsAdapter?.lastDeliveryFailure(m.teams.channelId);
+        // Any activity from the team means the app is in it; an uninstall event or a "not
+        // installed" rejection says it isn't. Otherwise it's still waiting for the install.
+        let teamsInstall: 'installed' | 'removed' | 'not_installed' | 'waiting';
+        if (installation && !installation.installed) teamsInstall = 'removed';
+        else if (lastFailure?.notInstalled) teamsInstall = 'not_installed';
+        else if (installation?.installed || teamsServiceUrlKnown || knownTeams.has(m.teams.teamId)) teamsInstall = 'installed';
+        else teamsInstall = 'waiting';
+        return {
+          ...m,
+          status: {
+            teamsServiceUrlKnown,
+            teamsInstall,
+            lastTeamsError: lastFailure ? { at: lastFailure.at, message: lastFailure.error } : undefined,
+          },
+        };
+      })
     );
   });
 
